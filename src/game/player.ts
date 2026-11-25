@@ -4,12 +4,17 @@ import { PLAYER_CLASSES } from './classes';
 import { ComputedPlayerStats } from './progression';
 import { ClassId, ColliderBox } from './types';
 
+export type AttackFormat = 'quick' | 'heavy' | 'spin' | 'dash';
+
 export interface PlayerInputState {
   forward: number; // -1..1
   right: number; // -1..1
   sprint: boolean;
   jump: boolean;
   attack: boolean;
+  heavyAttack: boolean;
+  spinAttack: boolean;
+  dashAttack: boolean;
   sacredAttack: boolean;
   shield: boolean;
   flashlightToggle: boolean;
@@ -38,6 +43,10 @@ export class PlayerController {
 
   public attackTimer = 0;
   public attackCooldown = 0;
+  public heavyCooldown = 0;
+  public spinCooldown = 0;
+  public dashCooldown = 0;
+  public activeAttackFormat: AttackFormat = 'quick';
   public attackCombo = 0;
   public attackHitTriggered = false;
 
@@ -430,11 +439,20 @@ export class PlayerController {
     boundsRadius: number,
     audio: AudioEngine,
     isStoneGround: boolean
-  ): { triggerMeleeHit: boolean } {
+  ): {
+    triggerMeleeHit: boolean;
+    attackFormat: AttackFormat;
+    comboStep: number;
+    lowEnergyFor?: string;
+  } {
     let triggerMeleeHit = false;
+    let lowEnergyFor: string | undefined;
 
     // Cooldowns & timers
     if (this.attackCooldown > 0) this.attackCooldown = Math.max(0, this.attackCooldown - dt);
+    if (this.heavyCooldown > 0) this.heavyCooldown = Math.max(0, this.heavyCooldown - dt);
+    if (this.spinCooldown > 0) this.spinCooldown = Math.max(0, this.spinCooldown - dt);
+    if (this.dashCooldown > 0) this.dashCooldown = Math.max(0, this.dashCooldown - dt);
     if (this.shieldCooldown > 0) this.shieldCooldown = Math.max(0, this.shieldCooldown - dt);
     if (this.energyAttackCooldown > 0) this.energyAttackCooldown = Math.max(0, this.energyAttackCooldown - dt);
     if (this.hurtFlashTimer > 0) this.hurtFlashTimer = Math.max(0, this.hurtFlashTimer - dt);
@@ -547,11 +565,51 @@ export class PlayerController {
       this.group.quaternion.slerp(_targetQuat, 1 - Math.exp(-18 * dt));
     }
 
-    // Attack Initiation
-    if (input.attack && this.attackCooldown <= 0) {
+    // Attack Formats Initiation
+    if (input.heavyAttack && this.heavyCooldown <= 0 && this.attackTimer <= 0.1) {
+      if (this.energy >= 14) {
+        this.energy -= 14;
+        this.activeAttackFormat = 'heavy';
+        this.attackTimer = 0.44;
+        this.heavyCooldown = 1.6 * stats.abilityCooldownMultiplier;
+        this.attackCooldown = Math.max(this.attackCooldown, 0.36);
+        this.attackHitTriggered = false;
+        if (this.playerClass !== 'archer') audio.playSwing();
+      } else {
+        lowEnergyFor = 'Need 14 Energy for Heavy Attack';
+      }
+    } else if (input.spinAttack && this.spinCooldown <= 0 && this.attackTimer <= 0.1) {
+      if (this.energy >= 18) {
+        this.energy -= 18;
+        this.activeAttackFormat = 'spin';
+        this.attackTimer = 0.48;
+        this.spinCooldown = 2.6 * stats.abilityCooldownMultiplier;
+        this.attackCooldown = Math.max(this.attackCooldown, 0.4);
+        this.attackHitTriggered = false;
+        if (this.playerClass !== 'archer') audio.playSwing();
+      } else {
+        lowEnergyFor = 'Need 18 Energy for Spin Burst';
+      }
+    } else if (input.dashAttack && this.dashCooldown <= 0 && this.attackTimer <= 0.1) {
+      if (this.energy >= 12) {
+        this.energy -= 12;
+        this.activeAttackFormat = 'dash';
+        this.attackTimer = 0.32;
+        this.dashCooldown = 2.0 * stats.abilityCooldownMultiplier;
+        this.attackCooldown = Math.max(this.attackCooldown, 0.3);
+        this.attackHitTriggered = false;
+        const dashSign = this.playerClass === 'archer' ? -15 : 19;
+        this.velocity.x = _camForward.x * dashSign;
+        this.velocity.z = _camForward.z * dashSign;
+        if (this.playerClass !== 'archer') audio.playSwing();
+      } else {
+        lowEnergyFor = 'Need 12 Energy for Dash Strike';
+      }
+    } else if (input.attack && this.attackCooldown <= 0) {
+      this.activeAttackFormat = 'quick';
       this.attackTimer = 0.34;
       this.attackCooldown = stats.attackCooldown;
-      this.attackCombo = (this.attackCombo + 1) % 2;
+      this.attackCombo = (this.attackCombo + 1) % 3;
       this.attackHitTriggered = false;
       if (this.playerClass !== 'archer') {
         audio.playSwing();
@@ -560,7 +618,15 @@ export class PlayerController {
 
     if (this.attackTimer > 0) {
       this.attackTimer = Math.max(0, this.attackTimer - dt);
-      if (!this.attackHitTriggered && this.attackTimer <= 0.22) {
+      const hitAt =
+        this.activeAttackFormat === 'heavy'
+          ? 0.25
+          : this.activeAttackFormat === 'spin'
+          ? 0.3
+          : this.activeAttackFormat === 'dash'
+          ? 0.18
+          : 0.22;
+      if (!this.attackHitTriggered && this.attackTimer <= hitAt) {
         this.attackHitTriggered = true;
         triggerMeleeHit = true;
       }
@@ -569,7 +635,12 @@ export class PlayerController {
     // Animate procedural rig
     this.animateRig(dt, isMoving, canSprint, audio, isStoneGround);
 
-    return { triggerMeleeHit };
+    return {
+      triggerMeleeHit,
+      attackFormat: this.activeAttackFormat,
+      comboStep: this.attackCombo,
+      lowEnergyFor,
+    };
   }
 
   private animateRig(
@@ -610,25 +681,52 @@ export class PlayerController {
     const lanternBob = isMoving ? Math.sin(this.walkPhase) * 0.08 : Math.sin(this.walkPhase) * 0.02;
     this.leftArmPivot.rotation.x = -0.72 + lanternBob;
 
-    // Right arm swing / bow aim animation
+    // Right arm swing / bow aim / multi-format animation
     if (this.attackTimer > 0) {
       if (this.playerClass === 'archer') {
-        this.rightArmPivot.rotation.x = -1.42;
-        this.rightArmPivot.rotation.z = 0.05;
+        this.rightArmPivot.rotation.x = this.activeAttackFormat === 'heavy' ? -1.58 : -1.42;
+        this.rightArmPivot.rotation.z = this.activeAttackFormat === 'spin' ? 0.35 : 0.05;
         this.torsoGroup.rotation.y = -0.22;
-        this.swordBladeMat.emissiveIntensity = 1.65;
+        this.bodyPivot.rotation.y = 0;
+        this.swordBladeMat.emissiveIntensity = this.activeAttackFormat === 'heavy' ? 2.6 : 1.65;
+      } else if (this.activeAttackFormat === 'spin') {
+        const p = 1 - this.attackTimer / 0.48;
+        this.bodyPivot.rotation.y = p * Math.PI * 2;
+        this.rightArmPivot.rotation.x = -1.35;
+        this.rightArmPivot.rotation.z = 1.15;
+        this.torsoGroup.rotation.y = 0.4;
+        this.swordBladeMat.emissiveIntensity = 2.2;
+      } else if (this.activeAttackFormat === 'heavy') {
+        const p = 1 - this.attackTimer / 0.44;
+        const overhead = THREE.MathUtils.lerp(-2.55, 0.45, Math.min(1, p * 1.35));
+        this.bodyPivot.rotation.y = 0;
+        this.rightArmPivot.rotation.x = overhead;
+        this.rightArmPivot.rotation.z = 0.05;
+        this.torsoGroup.rotation.x = p > 0.45 ? 0.28 : -0.15;
+        this.swordBladeMat.emissiveIntensity = 2.4;
+      } else if (this.activeAttackFormat === 'dash') {
+        this.bodyPivot.rotation.y = 0;
+        this.rightArmPivot.rotation.x = -1.55;
+        this.rightArmPivot.rotation.z = 0.1;
+        this.torsoGroup.rotation.x = 0.32;
+        this.torsoGroup.rotation.y = -0.35;
+        this.swordBladeMat.emissiveIntensity = 2.0;
       } else {
+        this.bodyPivot.rotation.y = 0;
         const p = 1 - this.attackTimer / 0.34; // 0 -> 1
         const swingAngle =
           this.attackCombo === 0
             ? THREE.MathUtils.lerp(-1.8, 0.9, Math.min(1, p * 1.45))
-            : THREE.MathUtils.lerp(0.9, -1.6, Math.min(1, p * 1.45));
+            : this.attackCombo === 1
+            ? THREE.MathUtils.lerp(0.9, -1.6, Math.min(1, p * 1.45))
+            : THREE.MathUtils.lerp(-2.2, 1.3, Math.min(1, p * 1.5));
         this.rightArmPivot.rotation.x = -1.35;
         this.rightArmPivot.rotation.z = swingAngle * 0.65;
         this.torsoGroup.rotation.y = swingAngle * 0.35;
-        this.swordBladeMat.emissiveIntensity = 1.4;
+        this.swordBladeMat.emissiveIntensity = this.attackCombo === 2 ? 2.0 : 1.4;
       }
     } else {
+      this.bodyPivot.rotation.y = THREE.MathUtils.damp(this.bodyPivot.rotation.y, 0, 14, dt);
       const armWalk = isMoving ? -Math.sin(this.walkPhase) * 0.4 * Math.min(1, horizSpeed / 5) : 0;
       const baseHold = this.playerClass === 'archer' ? -0.55 : armWalk - 0.18;
       this.rightArmPivot.rotation.x = THREE.MathUtils.damp(this.rightArmPivot.rotation.x, baseHold, 12, dt);

@@ -155,10 +155,16 @@ export class KalyugGameEngine {
   private frameId = 0;
   private disposed = false;
   private detachInputs: (() => void) | null = null;
+  private onToggleMap?: () => void;
 
-  constructor(container: HTMLElement, onHudUpdate: (snapshot: HudSnapshot) => void) {
+  constructor(
+    container: HTMLElement,
+    onHudUpdate: (snapshot: HudSnapshot) => void,
+    onToggleMap?: () => void
+  ) {
     this.container = container;
     this.onHudUpdate = onHudUpdate;
+    this.onToggleMap = onToggleMap;
     this.settings = loadSettings();
     this.isSoftwareGl = detectSoftwareWebGL();
     this.ecoHardware = detectEcoHardware();
@@ -173,7 +179,7 @@ export class KalyugGameEngine {
     this.renderer.toneMapping = THREE.ACESFilmicToneMapping;
     this.renderer.toneMappingExposure = 1.12;
     this.renderer.setPixelRatio(
-      isEco ? 1 : Math.min(window.devicePixelRatio, 1.5)
+      isEco ? Math.min(window.devicePixelRatio, 1.15) : Math.min(window.devicePixelRatio, 1.5)
     );
     this.renderer.shadowMap.enabled = effectiveShadows;
     this.renderer.shadowMap.type = THREE.PCFSoftShadowMap;
@@ -235,6 +241,7 @@ export class KalyugGameEngine {
     }
 
     window.addEventListener('resize', this.handleResize);
+    window.addEventListener('orientationchange', this.handleResize);
     this.renderer.domElement.addEventListener('webglcontextlost', this.handleContextLost);
 
     this.emitHud();
@@ -1331,6 +1338,11 @@ export class KalyugGameEngine {
       if (this.screen === 'playing') this.setScreen('inventory');
       else if (this.screen === 'inventory') this.setScreen('playing');
     }
+    if (sys.toggleMap && this.screen === 'playing') {
+      this.input.releasePointerLock();
+      this.input.clearKeys();
+      this.onToggleMap?.();
+    }
     if (this.screen === 'playing') {
       if (sys.usePrana) this.useConsumable('prana');
       if (sys.useSoma) this.useConsumable('soma');
@@ -1409,7 +1421,7 @@ export class KalyugGameEngine {
       }
     }
 
-    const { triggerMeleeHit } = this.player.update(
+    const { triggerMeleeHit, attackFormat, comboStep, lowEnergyFor } = this.player.update(
       dt,
       pInput,
       this.camCtrl.yaw,
@@ -1422,25 +1434,85 @@ export class KalyugGameEngine {
       this.currentArea.isStoneGround
     );
 
+    if (lowEnergyFor) {
+      this.showToast('Low Energy', lowEnergyFor, 'crimson');
+    }
+
     if (triggerMeleeHit) {
       this.player.getForwardDirection(_fwd);
-      const attackDamage = (28 + this.stats.weaponFlatBonus) * this.stats.damageMultiplier;
+      const baseAttackDamage = (28 + this.stats.weaponFlatBonus) * this.stats.damageMultiplier;
+      const burstCol = this.playerClass === 'blacksmith' ? 0xf97316 : 0xef4444;
+
       if (this.stats.isBowClass) {
-        this.combat.spawnPlayerArrow(this.player.position, _fwd, attackDamage, this.audio);
+        if (attackFormat === 'heavy') {
+          this.combat.spawnPiercingArrow(this.player.position, _fwd, baseAttackDamage * 1.9, this.audio);
+          this.camCtrl.triggerShake(0.16);
+        } else if (attackFormat === 'spin') {
+          this.combat.spawnArrowFan(this.player.position, _fwd, baseAttackDamage * 1.1, this.audio);
+        } else if (attackFormat === 'dash') {
+          this.combat.spawnPlayerArrow(this.player.position, _fwd, baseAttackDamage * 1.35, this.audio);
+          this.combat.spawnGroundRingEffect(this.player.position, 2.4, 0x22c55e);
+        } else {
+          const comboMult = comboStep === 2 ? 1.25 : 1.0;
+          this.combat.spawnPlayerArrow(this.player.position, _fwd, baseAttackDamage * comboMult, this.audio);
+        }
       } else {
-        const burstCol = this.playerClass === 'blacksmith' ? 0xf97316 : 0xef4444;
-        this.combat.performPlayerMelee(
-          this.player.position,
-          _fwd,
-          attackDamage,
-          this.enemies,
-          this.audio,
-          this.handleEnemyKilled,
-          () => this.camCtrl.triggerShake(this.playerClass === 'blacksmith' ? 0.2 : 0.14),
-          this.stats.meleeReach,
-          this.stats.knockback,
-          burstCol
-        );
+        if (attackFormat === 'heavy') {
+          this.combat.performPlayerMelee(
+            this.player.position,
+            _fwd,
+            baseAttackDamage * 1.85,
+            this.enemies,
+            this.audio,
+            this.handleEnemyKilled,
+            () => this.camCtrl.triggerShake(0.26),
+            this.stats.meleeReach + 1.1,
+            this.stats.knockback + 4.5,
+            0xfbbf24
+          );
+          this.combat.spawnGroundRingEffect(this.player.position, 3.6, 0xf97316);
+        } else if (attackFormat === 'spin') {
+          this.combat.performRadialDamage(
+            this.player.position,
+            this.stats.meleeReach + 1.3,
+            baseAttackDamage * 1.35,
+            9.0,
+            0xfbbf24,
+            this.enemies,
+            this.audio,
+            this.handleEnemyKilled
+          );
+          this.combat.spawnGroundRingEffect(this.player.position, 4.4, 0xfbbf24);
+          this.camCtrl.triggerShake(0.18);
+        } else if (attackFormat === 'dash') {
+          this.combat.performPlayerMelee(
+            this.player.position,
+            _fwd,
+            baseAttackDamage * 1.45,
+            this.enemies,
+            this.audio,
+            this.handleEnemyKilled,
+            () => this.camCtrl.triggerShake(0.18),
+            this.stats.meleeReach + 0.9,
+            this.stats.knockback + 2.5,
+            0x38bdf8
+          );
+          this.combat.spawnGroundRingEffect(this.player.position, 2.8, 0x38bdf8);
+        } else {
+          const comboMult = comboStep === 2 ? 1.28 : 1.0;
+          this.combat.performPlayerMelee(
+            this.player.position,
+            _fwd,
+            baseAttackDamage * comboMult,
+            this.enemies,
+            this.audio,
+            this.handleEnemyKilled,
+            () => this.camCtrl.triggerShake(this.playerClass === 'blacksmith' ? 0.2 : 0.14),
+            this.stats.meleeReach,
+            this.stats.knockback,
+            comboStep === 2 ? 0xfbbf24 : burstCol
+          );
+        }
       }
     }
 
@@ -1609,6 +1681,10 @@ export class KalyugGameEngine {
       shieldActive: this.player.shieldTimer > 0,
       shieldCooldown: Number(this.player.shieldCooldown.toFixed(1)),
       energyAttackCooldown: Number(this.player.energyAttackCooldown.toFixed(1)),
+      heavyCooldown: Number(this.player.heavyCooldown.toFixed(1)),
+      spinCooldown: Number(this.player.spinCooldown.toFixed(1)),
+      dashCooldown: Number(this.player.dashCooldown.toFixed(1)),
+      comboStep: this.player.attackCombo,
       abilities: { ...this.abilities },
       artifacts: [...this.artifacts],
       consumables: { ...this.consumables },
@@ -1647,6 +1723,29 @@ export class KalyugGameEngine {
       forgedWeaponsCount: this.forgedWeaponsCount,
       classSpecialCooldown: Number(this.classSpecialCooldown.toFixed(1)),
       yaggaActive: this.combat.hasActiveYagga(),
+      map: {
+        boundsRadius: this.currentArea?.boundsRadius ?? 48,
+        playerX: this.player.position.x,
+        playerZ: this.player.position.z,
+        playerYaw: this.player.yaw,
+        enemies: this.enemies
+          .filter((e) => e.alive && !e.dying)
+          .map((e) => ({
+            x: e.position.x,
+            z: e.position.z,
+            isBoss: e.type === 'boss_kali',
+          })),
+        markers: (this.currentArea?.interactives ?? [])
+          .filter((it) => !it.consumed || it.kind === 'portal' || it.kind === 'bell' || it.kind === 'trial_shrine')
+          .map((it) => ({
+            id: it.id,
+            kind: it.kind,
+            label: it.label,
+            x: it.position.x,
+            z: it.position.z,
+            locked: Boolean(it.locked),
+          })),
+      },
     });
   }
 
@@ -1655,6 +1754,7 @@ export class KalyugGameEngine {
     cancelAnimationFrame(this.frameId);
     clearTimeout(this.frameId);
     window.removeEventListener('resize', this.handleResize);
+    window.removeEventListener('orientationchange', this.handleResize);
     this.renderer.domElement.removeEventListener('webglcontextlost', this.handleContextLost);
     this.detachInputs?.();
 

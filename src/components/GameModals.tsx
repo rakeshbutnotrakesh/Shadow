@@ -1,5 +1,7 @@
 import React, { useState } from 'react';
 import {
+  CircleHelp,
+  Compass,
   Crown,
   Flame,
   Hammer,
@@ -22,6 +24,9 @@ interface GameModalsProps {
   engine: KalyugGameEngine;
   settings: GameSettings;
   onUpdateSettings: (partial: Partial<GameSettings>) => void;
+  showHelp: boolean;
+  onOpenHelp: () => void;
+  onCloseHelp: () => void;
 }
 
 const AREA_LABELS: Record<AreaId, string> = {
@@ -58,17 +63,243 @@ export const GameModals: React.FC<GameModalsProps> = ({
   engine,
   settings,
   onUpdateSettings,
+  showHelp,
+  onOpenHelp,
+  onCloseHelp,
 }) => {
   const [showSettings, setShowSettings] = useState(false);
   const [invTab, setInvTab] = useState<'artifacts' | 'blessings' | 'abilities' | 'quests'>('artifacts');
   const [pickedClass, setPickedClass] = useState<ClassId>('warrior');
 
+  // HELP & NEXT STEP MODAL
+  if (showHelp) {
+    const isPreGame = hud.screen === 'class_select' || hud.screen === 'menu';
+    const pendingObjectives = hud.activeQuest
+      ? hud.activeQuest.objectives.filter((o) => !o.completed)
+      : [];
+
+    const realmNextMap: Record<AreaId, string> = {
+      forest:
+        'Head north to the glowing Forest Gate portal and press [E] to enter the Ancient Temple.',
+      temple:
+        'Use the Catacombs Portal in the temple courtyard ([E]) once the Trishul Fragment is claimed.',
+      catacombs:
+        'Use the Sanctum Portal ([E]) once the Ancient Yantra is recovered.',
+      sanctum:
+        'Purify all 3 Corrupted Monoliths to unseal the northern Eclipse Gate to the Final Chamber.',
+      final_chamber:
+        'Claim the Divine Amulet at the threshold and defeat Kali Purusha to win the realm!',
+    };
+
+    const classTipMap: Record<ClassId, string> = {
+      warrior:
+        'Fight up close with Left Click (Khanda) and press [G] for 360° War Cleave. Use [T] Trial waves anytime to level up faster.',
+      archer:
+        'Keep distance and shoot with Left Click (Kodanda Bow). Press [G] to loose a 5-Arrow Volley into shadow groups.',
+      blacksmith: `You hold ${hud.forgeShards} Forge Shard(s). Press [G] to auto-craft your next weapon (or extract +1 Shard via Anvil Strike when empty), or open Satchel [I] to pick a weapon recipe.`,
+      saint:
+        'Perform sacred rituals: [G] Yagga creates an 8.5s fire zone, [H] Mantra restores +40 Energy & waves foes, [V] Puja heals 35% HP + Divine Shield.',
+      supporter:
+        'Strike with your Mace and press [G] Prana Pulse whenever low on health for a 40% heal + 4s Kavach Shield.',
+    };
+
+    const nextMilestone =
+      hud.level < 50
+        ? `Level 50: Claim your 3D Sacred Companion Pet & enter Hard Tier (${50 - hud.level} levels away).`
+        : hud.level < 90
+        ? `Level 90: Experience the Shiva Tandava Stotram & +30% Power (${90 - hud.level} levels away).`
+        : hud.level < 100
+        ? `Level 100: Receive Maha Maya's Supreme Weapon & Ascend as a God (${100 - hud.level} levels away).`
+        : 'Ascended God (Lv 100/100): Enter the Final Chamber and banish Kali Purusha!';
+
+    const realmRoadmap: Array<{ id: AreaId; step: string; goal: string }> = [
+      {
+        id: 'forest',
+        step: '01. Forgotten Forest',
+        goal: 'Claim the Rudraksha beneath the banyan shrine, banish 3 shadows, and enter the Temple Gate.',
+      },
+      {
+        id: 'temple',
+        step: '02. Ancient Temple',
+        goal: 'Ring the Temple Bell, align the 3 Mandala Altar rings to 0°, and claim the Trishul Fragment.',
+      },
+      {
+        id: 'catacombs',
+        step: '03. Underground Catacombs',
+        goal: 'Survive the tunnels, defeat guardians, and recover the Ancient Yantra.',
+      },
+      {
+        id: 'sanctum',
+        step: '04. Cursed Sanctum',
+        goal: 'Purify all 3 Corrupted Monoliths to open the Eclipse Gate and retrieve the Sacred Mantra.',
+      },
+      {
+        id: 'final_chamber',
+        step: '05. Final Chamber',
+        goal: 'Claim the Divine Amulet and banish Kali Purusha, Sovereign of Kalyug.',
+      },
+    ];
+
+    return (
+      <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/82 p-3 sm:p-4">
+        <div className="max-h-[90vh] w-full max-w-3xl overflow-y-auto border border-[#d4a34a]/45 bg-[#0d0b12] p-5 sm:p-6">
+          <div className="flex items-center justify-between border-b border-white/10 pb-3">
+            <div className="flex items-center gap-2">
+              <Compass className="h-5 w-5 text-[#d4a34a]" />
+              <h2 className="font-display text-xl font-semibold text-[#f5efe4]">
+                Help & Next Step Guide
+              </h2>
+            </div>
+            <button
+              type="button"
+              onClick={onCloseHelp}
+              aria-label="Close Help"
+              className="flex h-9 w-9 items-center justify-center border border-white/15 text-[#ede7dc]/80 hover:border-[#d4a34a] hover:text-[#d4a34a]"
+            >
+              <X className="h-4 w-4" />
+            </button>
+          </div>
+
+          <div className="mt-5 space-y-5 text-sm">
+            {/* Dynamic Next Step */}
+            <div className="border border-[#d4a34a]/45 bg-[#15111e] p-4">
+              <div className="text-xs font-semibold text-[#d4a34a]">
+                {isPreGame
+                  ? 'Getting Started'
+                  : `Your Next Step · ${hud.areaName} · Lv ${hud.level}/100 (${hud.difficultyTier})`}
+              </div>
+
+              {isPreGame ? (
+                <div className="mt-2 space-y-2 text-xs leading-relaxed text-[#ddd5c8]">
+                  <p>
+                    1. Choose a character path: <strong className="text-[#fbbf24]">Warrior</strong> or{' '}
+                    <strong className="text-[#fbbf24]">Archer</strong> to fight directly,{' '}
+                    <strong className="text-[#fbbf24]">Blacksmith</strong> to forge stronger weapons,{' '}
+                    <strong className="text-[#fbbf24]">Saint</strong> to perform Yagga, Mantra & Puja, or{' '}
+                    <strong className="text-[#fbbf24]">Supporter</strong> for Prana healing & shields.
+                  </p>
+                  <p>
+                    2. Click <strong className="text-[#fbbf24]">Begin Journey</strong> (or{' '}
+                    <strong className="text-[#fbbf24]">Continue Saved</strong> if available) to enter the 3D Forgotten Forest.
+                  </p>
+                </div>
+              ) : (
+                <div className="mt-2.5 space-y-2.5 text-xs leading-relaxed text-[#ddd5c8]">
+                  {pendingObjectives.length > 0 ? (
+                    <div>
+                      <div className="font-semibold text-[#fbbf24]">
+                        Active Quest: {hud.activeQuest?.title}
+                      </div>
+                      <ul className="mt-1 space-y-1">
+                        {pendingObjectives.map((obj) => (
+                          <li key={obj.id} className="text-[#f5efe4]">
+                            ○ Next Objective: {obj.label}
+                          </li>
+                        ))}
+                      </ul>
+                    </div>
+                  ) : (
+                    <div className="font-semibold text-emerald-300">
+                      ✓ {realmNextMap[hud.areaId]}
+                    </div>
+                  )}
+
+                  <div className="border-t border-white/10 pt-2 text-[#cfc6b6]">
+                    <span className="font-semibold text-[#fbbf24]">
+                      {PLAYER_CLASSES[hud.playerClass].name} Path Tip:
+                    </span>{' '}
+                    {classTipMap[hud.playerClass]}
+                  </div>
+
+                  <div className="text-[#a89f92]">
+                    <span className="font-semibold text-[#d4a34a]">Milestone:</span> {nextMilestone}
+                  </div>
+                </div>
+              )}
+            </div>
+
+            {/* 5-Realm Roadmap */}
+            <div>
+              <h3 className="mb-2 font-display text-sm font-semibold text-[#f5efe4]">
+                5-Realm Progression Roadmap
+              </h3>
+              <div className="space-y-2">
+                {realmRoadmap.map((r) => {
+                  const isCurrent = !isPreGame && hud.areaId === r.id;
+                  const isDiscovered = hud.discoveredAreas.includes(r.id);
+                  return (
+                    <div
+                      key={r.id}
+                      className={`flex flex-col justify-between gap-1 border p-3 sm:flex-row sm:items-center ${
+                        isCurrent
+                          ? 'border-[#d4a34a] bg-[#1a1424]'
+                          : isDiscovered
+                          ? 'border-white/15 bg-[#120f18]'
+                          : 'border-white/10 bg-[#0f0c14] opacity-70'
+                      }`}
+                    >
+                      <div>
+                        <div className="text-xs font-semibold text-[#fbbf24]">{r.step}</div>
+                        <div className="mt-0.5 text-xs text-[#cfc6b6]">{r.goal}</div>
+                      </div>
+                      <span className="shrink-0 text-[11px] font-medium text-[#d4a34a]">
+                        {isCurrent ? 'Current Realm' : isDiscovered ? 'Discovered' : 'Locked'}
+                      </span>
+                    </div>
+                  );
+                })}
+              </div>
+            </div>
+
+            {/* Controls Quick Reference */}
+            <div>
+              <h3 className="mb-2 font-display text-sm font-semibold text-[#f5efe4]">
+                Controls & Shortcuts
+              </h3>
+              <div className="grid grid-cols-2 gap-x-4 gap-y-1.5 border border-white/10 bg-[#120f18] p-3 text-xs text-[#cfc6b6] sm:grid-cols-3">
+                <span>WASD / Touch Pad · Move</span>
+                <span>Mouse / Drag · Camera</span>
+                <span>Click · 3-Hit Combo / Bow</span>
+                <span>R / Shift+Click · Heavy / Pierce</span>
+                <span>X · 360° Spin / 3x Fan</span>
+                <span>Z · Vayu Dash / Evade</span>
+                <span>Space · Jump</span>
+                <span>Shift · Sprint</span>
+                <span>E · Interact / Portals</span>
+                <span>M · Realm Radar Map</span>
+                <span>G · Class Path Action</span>
+                <span>H / V · Saint Mantra / Puja</span>
+                <span>T · Summon Trial Wave</span>
+                <span>Q · Sacred Energy Wave</span>
+                <span>C · Divine Shield</span>
+                <span>F · Toggle Flashlight</span>
+                <span>1 / 2 · Prana / Soma</span>
+                <span>I · Satchel & Forge</span>
+                <span>ESC · Pause Menu</span>
+              </div>
+            </div>
+          </div>
+
+          <div className="mt-5 flex justify-end border-t border-white/10 pt-4">
+            <button
+              type="button"
+              onClick={onCloseHelp}
+              className="border border-[#d4a34a] bg-[#d4a34a] px-6 py-2 text-sm font-semibold text-[#0b090f] hover:bg-[#e5b85c]"
+            >
+              Got It
+            </button>
+          </div>
+        </div>
+      </div>
+    );
+  }
+
   // SETTINGS MODAL
   if (showSettings) {
     return (
-      <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/75 p-4">
-        <div className="w-full max-w-lg border border-[#d4a34a]/30 bg-[#0d0b12] p-6 shadow-2xl">
-          <div className="mb-5 flex items-center justify-between border-b border-white/10 pb-3">
+      <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/75 p-3 sm:p-4">
+        <div className="max-h-[92vh] w-full max-w-lg overflow-y-auto border border-[#d4a34a]/30 bg-[#0d0b12] p-5 shadow-2xl sm:p-6">
+          <div className="mb-4 flex items-center justify-between border-b border-white/10 pb-3">
             <h2 className="font-display text-xl font-semibold text-[#ede7dc]">
               Settings
             </h2>
@@ -281,6 +512,14 @@ export const GameModals: React.FC<GameModalsProps> = ({
             </button>
             <button
               type="button"
+              onClick={onOpenHelp}
+              className="flex items-center justify-between border border-white/15 bg-[#120f18]/85 px-5 py-3 text-sm font-medium text-[#ddd5c8] transition-colors hover:border-[#d4a34a]/60"
+            >
+              <span>Help & Next Step</span>
+              <CircleHelp className="h-4 w-4 text-[#d4a34a]" />
+            </button>
+            <button
+              type="button"
               onClick={() => setShowSettings(true)}
               className="flex items-center justify-between border border-white/15 bg-[#120f18]/85 px-5 py-3 text-sm font-medium text-[#ddd5c8] transition-colors hover:border-[#d4a34a]/60"
             >
@@ -332,6 +571,14 @@ export const GameModals: React.FC<GameModalsProps> = ({
                   Continue Saved (Lv {hud.level})
                 </button>
               )}
+              <button
+                type="button"
+                onClick={onOpenHelp}
+                className="flex items-center gap-1.5 border border-[#d4a34a]/45 bg-[#171220] px-3.5 py-2 text-xs font-medium text-[#fbbf24] hover:border-[#d4a34a]"
+              >
+                <CircleHelp className="h-3.5 w-3.5 text-[#d4a34a]" />
+                Help & Next Step
+              </button>
               <button
                 type="button"
                 onClick={() => setShowSettings(true)}
@@ -1172,6 +1419,13 @@ export const GameModals: React.FC<GameModalsProps> = ({
               className="border border-white/15 bg-[#15121d] px-4 py-2.5 text-sm font-medium text-[#ede7dc] hover:border-[#d4a34a]"
             >
               Satchel, Blessings & Quests
+            </button>
+            <button
+              type="button"
+              onClick={onOpenHelp}
+              className="border border-[#d4a34a]/45 bg-[#171220] px-4 py-2.5 text-sm font-medium text-[#fbbf24] hover:border-[#d4a34a]"
+            >
+              Help & Next Step
             </button>
             <button
               type="button"

@@ -190,6 +190,24 @@ export interface InteractiveObject {
   loreText?: string;
 }
 
+export interface MapMarker {
+  id: string;
+  kind: InteractiveObject['kind'];
+  label: string;
+  x: number;
+  z: number;
+  locked: boolean;
+}
+
+export interface MapSnapshot {
+  boundsRadius: number;
+  playerX: number;
+  playerZ: number;
+  playerYaw: number;
+  enemies: Array<{ x: number; z: number; isBoss: boolean }>;
+  markers: MapMarker[];
+}
+
 export interface HudSnapshot {
   screen: GameScreen;
   areaId: AreaId;
@@ -222,6 +240,10 @@ export interface HudSnapshot {
   shieldActive: boolean;
   shieldCooldown: number;
   energyAttackCooldown: number;
+  heavyCooldown: number;
+  spinCooldown: number;
+  dashCooldown: number;
+  comboStep: number;
   abilities: Partial<Record<AbilityId, number>>;
   artifacts: ArtifactId[];
   consumables: ConsumableInventory;
@@ -251,4 +273,6 @@ export interface HudSnapshot {
   forgedWeaponsCount: number;
   classSpecialCooldown: number;
   yaggaActive: boolean;
+  map: MapSnapshot;
 }
+

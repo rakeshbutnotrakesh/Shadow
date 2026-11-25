@@ -1,3 +1,4 @@
+import * as THREE from 'three';
 import { PlayerInputState } from './player';
 
 export class InputManager {
@@ -5,6 +6,9 @@ export class InputManager {
   public pointerLocked = false;
 
   private pendingAttack = false;
+  private pendingHeavyAttack = false;
+  private pendingSpinAttack = false;
+  private pendingDashAttack = false;
   private pendingSacredAttack = false;
   private pendingShield = false;
   private pendingFlashlight = false;
@@ -18,6 +22,7 @@ export class InputManager {
   private pendingClassAction = false;
   private pendingSaintMantra = false;
   private pendingSaintPuja = false;
+  private pendingToggleMap = false;
 
   private camDeltaX = 0;
   private camDeltaY = 0;
@@ -56,6 +61,8 @@ export class InputManager {
         this.pendingPause = true;
       } else if (e.code === 'KeyI') {
         this.pendingInventory = true;
+      } else if (e.code === 'KeyM') {
+        this.pendingToggleMap = true;
       }
 
       if (!this.isPlayingFn()) return;
@@ -73,6 +80,12 @@ export class InputManager {
         this.pendingShield = true;
       } else if (e.code === 'KeyJ') {
         this.pendingAttack = true;
+      } else if (e.code === 'KeyR') {
+        this.pendingHeavyAttack = true;
+      } else if (e.code === 'KeyX') {
+        this.pendingSpinAttack = true;
+      } else if (e.code === 'KeyZ') {
+        this.pendingDashAttack = true;
       } else if (e.code === 'Digit1') {
         this.pendingUsePrana = true;
       } else if (e.code === 'Digit2') {
@@ -104,7 +117,11 @@ export class InputManager {
             // Fallback to drag if pointer lock is blocked in iframe
           }
         }
-        this.pendingAttack = true;
+        if (e.shiftKey) {
+          this.pendingHeavyAttack = true;
+        } else {
+          this.pendingAttack = true;
+        }
         this.isDraggingMouse = true;
         this.lastMouseX = e.clientX;
         this.lastMouseY = e.clientY;
@@ -161,8 +178,10 @@ export class InputManager {
       for (let i = 0; i < e.changedTouches.length; i++) {
         const t = e.changedTouches[i];
         if (t.identifier === this.activeTouchId) {
-          this.camDeltaX += (t.clientX - this.lastTouchX) * 1.65;
-          this.camDeltaY += (t.clientY - this.lastTouchY) * 1.45;
+          const rawDx = t.clientX - this.lastTouchX;
+          const rawDy = t.clientY - this.lastTouchY;
+          this.camDeltaX += THREE.MathUtils.clamp(rawDx, -60, 60) * 1.65;
+          this.camDeltaY += THREE.MathUtils.clamp(rawDy, -60, 60) * 1.45;
           this.lastTouchX = t.clientX;
           this.lastTouchY = t.clientY;
         }
@@ -188,6 +207,7 @@ export class InputManager {
     canvas.addEventListener('touchstart', onTouchStart, { passive: true });
     canvas.addEventListener('touchmove', onTouchMove, { passive: true });
     canvas.addEventListener('touchend', onTouchEnd);
+    canvas.addEventListener('touchcancel', onTouchEnd);
 
     return () => {
       window.removeEventListener('keydown', onKeyDown);
@@ -201,6 +221,7 @@ export class InputManager {
       canvas.removeEventListener('touchstart', onTouchStart);
       canvas.removeEventListener('touchmove', onTouchMove);
       canvas.removeEventListener('touchend', onTouchEnd);
+      canvas.removeEventListener('touchcancel', onTouchEnd);
     };
   }
 
@@ -212,6 +233,9 @@ export class InputManager {
 
   // Trigger methods for mobile / HUD buttons
   public triggerAttack(): void { this.pendingAttack = true; }
+  public triggerHeavyAttack(): void { this.pendingHeavyAttack = true; }
+  public triggerSpinAttack(): void { this.pendingSpinAttack = true; }
+  public triggerDashAttack(): void { this.pendingDashAttack = true; }
   public triggerSacredAttack(): void { this.pendingSacredAttack = true; }
   public triggerShield(): void { this.pendingShield = true; }
   public triggerJump(): void { this.pendingJump = true; }
@@ -220,6 +244,7 @@ export class InputManager {
   public triggerClassAction(): void { this.pendingClassAction = true; }
   public triggerSaintMantra(): void { this.pendingSaintMantra = true; }
   public triggerSaintPuja(): void { this.pendingSaintPuja = true; }
+  public triggerToggleMap(): void { this.pendingToggleMap = true; }
 
   public consumeCameraDeltas(): { dx: number; dy: number; wheel: number } {
     const out = { dx: this.camDeltaX, dy: this.camDeltaY, wheel: this.wheelDelta };
@@ -238,6 +263,7 @@ export class InputManager {
     classAction: boolean;
     saintMantra: boolean;
     saintPuja: boolean;
+    toggleMap: boolean;
   } {
     const out = {
       pause: this.pendingPause,
@@ -248,6 +274,7 @@ export class InputManager {
       classAction: this.pendingClassAction,
       saintMantra: this.pendingSaintMantra,
       saintPuja: this.pendingSaintPuja,
+      toggleMap: this.pendingToggleMap,
     };
     this.pendingPause = false;
     this.pendingInventory = false;
@@ -257,6 +284,7 @@ export class InputManager {
     this.pendingClassAction = false;
     this.pendingSaintMantra = false;
     this.pendingSaintPuja = false;
+    this.pendingToggleMap = false;
     return out;
   }
 
@@ -281,6 +309,9 @@ export class InputManager {
       sprint,
       jump: this.pendingJump,
       attack: this.pendingAttack,
+      heavyAttack: this.pendingHeavyAttack,
+      spinAttack: this.pendingSpinAttack,
+      dashAttack: this.pendingDashAttack,
       sacredAttack: this.pendingSacredAttack,
       shield: this.pendingShield,
       flashlightToggle: this.pendingFlashlight,
@@ -289,6 +320,9 @@ export class InputManager {
 
     this.pendingJump = false;
     this.pendingAttack = false;
+    this.pendingHeavyAttack = false;
+    this.pendingSpinAttack = false;
+    this.pendingDashAttack = false;
     this.pendingSacredAttack = false;
     this.pendingShield = false;
     this.pendingFlashlight = false;
@@ -301,7 +335,7 @@ export class InputManager {
     this.keys = {};
     this.mobileMoveX = 0;
     this.mobileMoveY = 0;
+    this.activeTouchId = null;
   }
 }
 
-import * as THREE from 'three';

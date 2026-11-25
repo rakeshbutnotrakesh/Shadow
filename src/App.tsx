@@ -1,7 +1,20 @@
 import { useEffect, useRef, useState } from 'react';
-import { Backpack, Compass, Pause, Shield, Sparkles, Sun, Swords } from 'lucide-react';
+import {
+  Backpack,
+  CircleHelp,
+  Compass,
+  Map as MapIcon,
+  Maximize2,
+  Pause,
+  RotateCw,
+  Shield,
+  Sparkles,
+  Sun,
+  Swords,
+} from 'lucide-react';
 import { GameModals } from './components/GameModals';
 import { MobileControls } from './components/MobileControls';
+import { FullRealmMapModal, HudMinimap } from './components/RealmMap';
 import { PLAYER_CLASSES } from './game/classes';
 import { KalyugGameEngine } from './game/main';
 import { DEFAULT_SETTINGS, hasSavedGame, loadSettings } from './game/save';
@@ -30,6 +43,10 @@ const INITIAL_HUD: HudSnapshot = {
   shieldActive: false,
   shieldCooldown: 0,
   energyAttackCooldown: 0,
+  heavyCooldown: 0,
+  spinCooldown: 0,
+  dashCooldown: 0,
+  comboStep: 0,
   abilities: {},
   artifacts: [],
   consumables: { pranaElixir: 2, somaVial: 2 },
@@ -52,6 +69,14 @@ const INITIAL_HUD: HudSnapshot = {
   forgedWeaponsCount: 0,
   classSpecialCooldown: 0,
   yaggaActive: false,
+  map: {
+    boundsRadius: 48,
+    playerX: 0,
+    playerZ: 0,
+    playerYaw: 0,
+    enemies: [],
+    markers: [],
+  },
 };
 
 export default function App() {
@@ -60,31 +85,109 @@ export default function App() {
   const [hud, setHud] = useState<HudSnapshot>(INITIAL_HUD);
   const [settings, setSettings] = useState<GameSettings>(() => loadSettings() ?? DEFAULT_SETTINGS);
   const [isTouchDevice, setIsTouchDevice] = useState(false);
+  const [isPortrait, setIsPortrait] = useState(false);
+  const [landscapeDismissed, setLandscapeDismissed] = useState(false);
+  const [showHelp, setShowHelp] = useState(false);
+  const [showMap, setShowMap] = useState(false);
+
+  const openHelp = () => {
+    engineRef.current?.input.releasePointerLock();
+    engineRef.current?.input.clearKeys();
+    setShowHelp(true);
+  };
+
+  const openMap = () => {
+    engineRef.current?.input.releasePointerLock();
+    engineRef.current?.input.clearKeys();
+    setShowMap(true);
+  };
+
+  const enterLandscapeMode = async () => {
+    try {
+      if (!document.fullscreenElement && document.documentElement.requestFullscreen) {
+        await document.documentElement.requestFullscreen();
+      }
+    } catch {
+      // Fullscreen may be restricted in some embedded previews
+    }
+    try {
+      const orientation = screen.orientation as ScreenOrientation & {
+        lock?: (orientation: 'landscape' | 'landscape-primary') => Promise<void>;
+      };
+      await orientation?.lock?.('landscape');
+    } catch {
+      // Browsers like iOS Safari rely on physical device rotation
+    }
+  };
 
   useEffect(() => {
-    const checkTouch = () => {
+    const checkTouchAndOrientation = () => {
       setIsTouchDevice(
-        'ontouchstart' in window || navigator.maxTouchPoints > 0 || window.innerWidth <= 900
+        'ontouchstart' in window || navigator.maxTouchPoints > 0 || window.innerWidth <= 920
       );
+      setIsPortrait(window.innerHeight > window.innerWidth);
     };
-    checkTouch();
-    window.addEventListener('resize', checkTouch);
+    checkTouchAndOrientation();
+    window.addEventListener('resize', checkTouchAndOrientation);
+    window.addEventListener('orientationchange', checkTouchAndOrientation);
+
+    const handleHelpKeys = (e: KeyboardEvent) => {
+      if (e.key === '?' || e.key === 'F1') {
+        e.preventDefault();
+        setShowHelp((prev) => {
+          const next = !prev;
+          if (next) {
+            engineRef.current?.input.releasePointerLock();
+            engineRef.current?.input.clearKeys();
+          }
+          return next;
+        });
+      } else if (e.key === 'Escape') {
+        setShowHelp(false);
+        setShowMap(false);
+      }
+    };
+    window.addEventListener('keydown', handleHelpKeys);
 
     if (!canvasMountRef.current) {
-      return () => window.removeEventListener('resize', checkTouch);
+      return () => {
+        window.removeEventListener('resize', checkTouchAndOrientation);
+        window.removeEventListener('orientationchange', checkTouchAndOrientation);
+        window.removeEventListener('keydown', handleHelpKeys);
+      };
     }
 
-    const engine = new KalyugGameEngine(canvasMountRef.current, (snapshot) => {
-      setHud(snapshot);
-    });
+    const engine = new KalyugGameEngine(
+      canvasMountRef.current,
+      (snapshot) => {
+        setHud(snapshot);
+      },
+      () => {
+        setShowMap((prev) => !prev);
+      }
+    );
     engineRef.current = engine;
 
     return () => {
-      window.removeEventListener('resize', checkTouch);
+      window.removeEventListener('resize', checkTouchAndOrientation);
+      window.removeEventListener('orientationchange', checkTouchAndOrientation);
+      window.removeEventListener('keydown', handleHelpKeys);
       engine.dispose();
       engineRef.current = null;
     };
   }, []);
+
+  // Attempt automatic landscape lock when entering gameplay on mobile
+  useEffect(() => {
+    if (hud.screen === 'playing' && isTouchDevice) {
+      const orientation = screen.orientation as ScreenOrientation & {
+        lock?: (orientation: 'landscape') => Promise<void>;
+      };
+      orientation?.lock?.('landscape')?.catch(() => {
+        // Ignore if browser requires fullscreen gesture first
+      });
+    }
+  }, [hud.screen, isTouchDevice]);
 
   const handleUpdateSettings = (partial: Partial<GameSettings>) => {
     setSettings((prev) => {
@@ -119,13 +222,13 @@ export default function App() {
       {/* Isolated WebGL Viewport Container */}
       <div ref={canvasMountRef} className="absolute inset-0 h-full w-full" />
 
-      {/* Playing HUD (Unobstructed Center Viewport, Solid/RGBA Surfaces without backdrop-blur) */}
+      {/* Playing HUD (Unobstructed Center Viewport, Compact on Landscape Phones) */}
       {hud.screen === 'playing' && engineRef.current && (
-        <div className="pointer-events-none fixed inset-0 z-10 flex flex-col justify-between p-2.5 sm:p-4 md:p-5">
+        <div className="pointer-events-none fixed inset-0 z-10 flex flex-col justify-between p-2 sm:p-3.5 [@media(max-height:500px)]:p-2">
           {/* Top Row */}
-          <div className="flex items-start justify-between gap-2 sm:gap-4">
+          <div className="flex items-start justify-between gap-2 sm:gap-3">
             {/* Top-Left: Vitals & Skills */}
-            <div className="w-44 border border-[#d4a34a]/25 bg-[#0b090f]/85 p-2.5 sm:w-68 sm:p-3.5 md:w-76">
+            <div className="w-44 border border-[#d4a34a]/25 bg-[#0b090f]/85 p-2 sm:w-64 sm:p-3 [@media(max-height:500px)]:w-52 [@media(max-height:500px)]:p-2">
               <div className="mb-1 flex items-center justify-between text-[11px] sm:text-xs">
                 <span className="truncate font-display font-semibold text-[#f5efe4]">
                   {PLAYER_CLASSES[hud.playerClass].name} · Lv {hud.level}/100
@@ -184,12 +287,12 @@ export default function App() {
               </div>
 
               {/* Quick Skills & Consumables Row */}
-              <div className="pointer-events-auto mt-3 flex flex-wrap items-center gap-1.5 text-[11px]">
+              <div className="pointer-events-auto mt-2 flex flex-wrap items-center gap-1 text-[10px] sm:gap-1.5 sm:text-[11px]">
                 <button
                   type="button"
                   onClick={() => engineRef.current?.useConsumable('prana')}
                   title="Use Prana Elixir (Key 1)"
-                  className="border border-white/15 bg-white/5 px-2 py-1 text-[#cfc6b6] hover:border-emerald-400"
+                  className="border border-white/15 bg-white/5 px-1.5 py-0.5 text-[#cfc6b6] hover:border-emerald-400 sm:px-2 sm:py-1"
                 >
                   <span className="font-mono-num text-emerald-400">[1]</span> {hud.consumables.pranaElixir}
                 </button>
@@ -197,7 +300,7 @@ export default function App() {
                   type="button"
                   onClick={() => engineRef.current?.useConsumable('soma')}
                   title="Use Soma Vial (Key 2)"
-                  className="border border-white/15 bg-white/5 px-2 py-1 text-[#cfc6b6] hover:border-sky-400"
+                  className="border border-white/15 bg-white/5 px-1.5 py-0.5 text-[#cfc6b6] hover:border-sky-400 sm:px-2 sm:py-1"
                 >
                   <span className="font-mono-num text-sky-400">[2]</span> {hud.consumables.somaVial}
                 </button>
@@ -205,7 +308,7 @@ export default function App() {
                   type="button"
                   onClick={() => engineRef.current?.input.triggerFlashlight()}
                   title="Toggle Flashlight (F)"
-                  className={`flex items-center gap-1 border px-2 py-1 ${
+                  className={`flex items-center gap-1 border px-1.5 py-0.5 sm:px-2 sm:py-1 ${
                     hud.flashlightOn
                       ? 'border-[#d4a34a]/60 bg-[#d4a34a]/15 text-[#fbbf24]'
                       : 'border-white/15 bg-white/5 text-[#8a8175]'
@@ -219,7 +322,7 @@ export default function App() {
                     type="button"
                     onClick={() => engineRef.current?.input.triggerSacredAttack()}
                     title="Sacred Energy Wave (Q)"
-                    className="flex items-center gap-1 border border-amber-400/50 bg-amber-500/15 px-2 py-1 text-amber-300"
+                    className="flex items-center gap-1 border border-amber-400/50 bg-amber-500/15 px-1.5 py-0.5 text-amber-300 sm:px-2 sm:py-1"
                   >
                     <Sparkles className="h-3 w-3" />
                     <span className="font-mono-num">
@@ -232,7 +335,7 @@ export default function App() {
                     type="button"
                     onClick={() => engineRef.current?.input.triggerShield()}
                     title="Divine Shield (C)"
-                    className={`flex items-center gap-1 border px-2 py-1 ${
+                    className={`flex items-center gap-1 border px-1.5 py-0.5 sm:px-2 sm:py-1 ${
                       hud.shieldActive
                         ? 'border-sky-300 bg-sky-500/25 text-white'
                         : 'border-sky-400/50 bg-sky-500/15 text-sky-300'
@@ -248,14 +351,47 @@ export default function App() {
                   type="button"
                   onClick={() => engineRef.current?.invokeShadowTrialWave()}
                   title="Summon Scaled Shadow Trial Wave (T)"
-                  className="border border-[#b83a2d]/60 bg-[#b83a2d]/20 px-2 py-1 text-[#fca5a5] hover:border-[#ef4444]"
+                  className="border border-[#b83a2d]/60 bg-[#b83a2d]/20 px-1.5 py-0.5 text-[#fca5a5] hover:border-[#ef4444] sm:px-2 sm:py-1"
                 >
                   [T] Trial
                 </button>
               </div>
 
+              {/* Attack Format Bar (Desktop & Quick Click) */}
+              {!showTouchControls && (
+                <div className="pointer-events-auto mt-1.5 flex flex-wrap items-center gap-1 text-[10px]">
+                  <button
+                    type="button"
+                    onClick={() => engineRef.current?.input.triggerHeavyAttack()}
+                    title="Heavy Overhead Slam / Piercing Surya Arrow (R or Shift+Click)"
+                    className="border border-orange-400/55 bg-orange-950/45 px-1.5 py-0.5 font-medium text-orange-200 hover:border-orange-300"
+                  >
+                    [R] {hud.playerClass === 'archer' ? 'Pierce' : 'Heavy'}
+                    {hud.heavyCooldown > 0 ? ` ${hud.heavyCooldown}s` : ''}
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => engineRef.current?.input.triggerSpinAttack()}
+                    title="360° Chakra Spin / 3-Arrow Fan Burst (X)"
+                    className="border border-amber-400/55 bg-amber-950/45 px-1.5 py-0.5 font-medium text-amber-200 hover:border-amber-300"
+                  >
+                    [X] {hud.playerClass === 'archer' ? 'Fan 3x' : 'Spin'}
+                    {hud.spinCooldown > 0 ? ` ${hud.spinCooldown}s` : ''}
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => engineRef.current?.input.triggerDashAttack()}
+                    title="Vayu Dash Lunge / Evade Shot (Z)"
+                    className="border border-sky-400/55 bg-sky-950/45 px-1.5 py-0.5 font-medium text-sky-200 hover:border-sky-300"
+                  >
+                    [Z] {hud.playerClass === 'archer' ? 'Evade' : 'Dash'}
+                    {hud.dashCooldown > 0 ? ` ${hud.dashCooldown}s` : ''}
+                  </button>
+                </div>
+              )}
+
               {/* Class Path Quick Actions */}
-              <div className="pointer-events-auto mt-2 flex flex-wrap items-center gap-1.5 text-[11px]">
+              <div className="pointer-events-auto mt-1.5 flex flex-wrap items-center gap-1 text-[10px] sm:gap-1.5 sm:text-[11px]">
                 {hud.playerClass === 'blacksmith' && (
                   <>
                     <span className="border border-orange-400/40 bg-orange-950/50 px-2 py-1 font-mono-num text-orange-300">
@@ -403,13 +539,44 @@ export default function App() {
               )}
             </div>
 
-            {/* Top-Right: Realm, Active Quest & Menu Buttons */}
-            <div className="flex flex-col items-end gap-1.5 sm:gap-2">
-              <div className="pointer-events-auto flex items-center gap-1.5 sm:gap-2">
+            {/* Top-Right: Radar Map, Quest & Utility Buttons */}
+            <div className="flex flex-col items-end gap-1.5">
+              <div className="pointer-events-auto flex flex-wrap items-center justify-end gap-1 sm:gap-1.5">
+                {isTouchDevice && (
+                  <button
+                    type="button"
+                    onClick={enterLandscapeMode}
+                    title="Fullscreen Landscape Mode"
+                    className="flex items-center gap-1 whitespace-nowrap border border-[#d4a34a]/40 bg-[#15111d]/90 px-2 py-1.5 text-[11px] font-medium text-[#fbbf24]"
+                  >
+                    <Maximize2 className="h-3.5 w-3.5 text-[#d4a34a]" />
+                    <span className="hidden md:inline">Landscape</span>
+                  </button>
+                )}
+                <button
+                  type="button"
+                  onClick={openMap}
+                  title="Realm Map (M)"
+                  className="flex items-center gap-1 whitespace-nowrap border border-[#d4a34a]/40 bg-[#15111d]/90 px-2 py-1.5 text-[11px] font-medium text-[#fbbf24] hover:border-[#d4a34a] sm:px-2.5 sm:text-xs"
+                >
+                  <MapIcon className="h-3.5 w-3.5 text-[#d4a34a]" />
+                  <span className="hidden sm:inline">Map [M]</span>
+                  <span className="sm:hidden">Map</span>
+                </button>
+                <button
+                  type="button"
+                  onClick={openHelp}
+                  title="Help & Next Step Guide (?)"
+                  className="flex items-center gap-1 whitespace-nowrap border border-[#d4a34a]/45 bg-[#15111d]/90 px-2 py-1.5 text-[11px] font-medium text-[#fbbf24] hover:border-[#d4a34a] sm:px-2.5 sm:text-xs"
+                >
+                  <CircleHelp className="h-3.5 w-3.5 text-[#d4a34a]" />
+                  <span className="hidden md:inline">Help & Next Step</span>
+                  <span className="md:hidden">Help</span>
+                </button>
                 <button
                   type="button"
                   onClick={() => engineRef.current?.setScreen('inventory')}
-                  className="flex items-center gap-1 border border-[#d4a34a]/30 bg-[#0b090f]/85 px-2.5 py-1.5 text-[11px] font-medium text-[#ede7dc] hover:border-[#d4a34a] sm:px-3 sm:py-2 sm:text-xs"
+                  className="flex items-center gap-1 whitespace-nowrap border border-[#d4a34a]/30 bg-[#0b090f]/85 px-2 py-1.5 text-[11px] font-medium text-[#ede7dc] hover:border-[#d4a34a] sm:px-2.5 sm:text-xs"
                 >
                   <Backpack className="h-3.5 w-3.5 text-[#d4a34a]" />
                   <span className="hidden sm:inline">Satchel [I]</span>
@@ -418,43 +585,59 @@ export default function App() {
                 <button
                   type="button"
                   onClick={() => engineRef.current?.setScreen('paused')}
-                  className="flex items-center gap-1 border border-[#d4a34a]/30 bg-[#0b090f]/85 px-2.5 py-1.5 text-[11px] font-medium text-[#ede7dc] hover:border-[#d4a34a] sm:px-3 sm:py-2 sm:text-xs"
+                  className="flex items-center gap-1 whitespace-nowrap border border-[#d4a34a]/30 bg-[#0b090f]/85 px-2 py-1.5 text-[11px] font-medium text-[#ede7dc] hover:border-[#d4a34a] sm:px-2.5 sm:text-xs"
                 >
                   <Pause className="h-3.5 w-3.5 text-[#d4a34a]" />
                   <span className="hidden sm:inline">Pause</span>
                 </button>
               </div>
 
-              <div className="w-40 border border-[#d4a34a]/25 bg-[#0b090f]/85 p-2.5 text-right sm:w-64 sm:p-3.5 md:w-72">
-                <div className="flex items-center justify-end gap-1.5 text-[11px] font-semibold text-[#d4a34a] sm:text-xs">
-                  <Compass className="h-3.5 w-3.5 shrink-0" />
-                  <span className="truncate">{hud.areaName}</span>
-                </div>
-                {hud.activeQuest && (
-                  <div className="mt-2 border-t border-white/10 pt-2 text-left">
-                    <div className="text-xs font-semibold text-[#f5efe4]">
-                      {hud.activeQuest.title}
-                    </div>
-                    <div className="mt-1 space-y-1">
-                      {hud.activeQuest.objectives.map((o) => (
-                        <div
-                          key={o.id}
-                          className={`text-[11px] ${
-                            o.completed ? 'text-emerald-400 line-through' : 'text-[#cfc6b6]'
-                          }`}
+              <div className="flex items-start gap-1.5 sm:gap-2">
+                <HudMinimap
+                  map={hud.map}
+                  areaName={hud.areaName}
+                  onExpand={openMap}
+                />
+
+                <div className="w-36 border border-[#d4a34a]/25 bg-[#0b090f]/85 p-2 text-right sm:w-52 sm:p-2.5 [@media(max-height:500px)]:w-44 [@media(max-height:500px)]:p-2">
+                  <div className="flex items-center justify-end gap-1 text-[10px] font-semibold text-[#d4a34a] sm:text-xs">
+                    <Compass className="h-3 w-3 shrink-0" />
+                    <span className="truncate">{hud.areaName}</span>
+                  </div>
+                  {hud.activeQuest && (
+                    <div className="mt-1.5 border-t border-white/10 pt-1.5 text-left">
+                      <div className="truncate text-[11px] font-semibold text-[#f5efe4]">
+                        {hud.activeQuest.title}
+                      </div>
+                      <div className="mt-1 space-y-0.5">
+                        {hud.activeQuest.objectives.map((o) => (
+                          <div
+                            key={o.id}
+                            className={`text-[10px] leading-tight sm:text-[11px] ${
+                              o.completed ? 'text-emerald-400 line-through' : 'text-[#cfc6b6]'
+                            }`}
+                          >
+                            {o.completed ? '✓' : '○'} {o.label}
+                          </div>
+                        ))}
+                      </div>
+                      {hud.activeQuest.completed && (
+                        <button
+                          type="button"
+                          onClick={openHelp}
+                          className="pointer-events-auto mt-1.5 block w-full border border-emerald-500/40 bg-emerald-950/35 px-1.5 py-1 text-left text-[10px] font-medium text-emerald-300 hover:border-emerald-400"
                         >
-                          {o.completed ? '✓' : '○'} {o.label}
-                        </div>
-                      ))}
+                          Next Step: Portal [E] →
+                        </button>
+                      )}
                     </div>
-                  </div>
-                )}
-                {hud.detectedEnemyCount > 0 && (
-                  <div className="mt-2 border-t border-white/10 pt-1.5 text-left text-[11px] text-sky-300">
-                    Shadow Detection: {hud.detectedEnemyCount} nearby threat
-                    {hud.detectedEnemyCount > 1 ? 's' : ''}
-                  </div>
-                )}
+                  )}
+                  {hud.detectedEnemyCount > 0 && (
+                    <div className="mt-1.5 border-t border-white/10 pt-1 text-left text-[10px] text-sky-300">
+                      Nearby Threats: {hud.detectedEnemyCount}
+                    </div>
+                  )}
+                </div>
               </div>
             </div>
           </div>
@@ -484,15 +667,16 @@ export default function App() {
             )}
 
             {!showTouchControls && (
-              <div className="flex flex-wrap items-center justify-center gap-x-4 gap-y-1 bg-[#0b090f]/75 px-4 py-1.5 text-[11px] text-[#9c9387]">
+              <div className="flex flex-wrap items-center justify-center gap-x-3 gap-y-1 bg-[#0b090f]/75 px-4 py-1.5 text-[11px] text-[#9c9387]">
                 <span className="flex items-center gap-1">
-                  <Swords className="h-3 w-3 text-[#d4a34a]" /> Click · {hud.playerClass === 'archer' ? 'Shoot Bow' : 'Attack'}
+                  <Swords className="h-3 w-3 text-[#d4a34a]" /> Click · {hud.playerClass === 'archer' ? 'Bow' : 'Combo'}
                 </span>
+                <span>R · {hud.playerClass === 'archer' ? 'Pierce' : 'Heavy'}</span>
+                <span>X · {hud.playerClass === 'archer' ? '3x Fan' : 'Spin'}</span>
+                <span>Z · {hud.playerClass === 'archer' ? 'Evade' : 'Dash'}</span>
                 <span>WASD · Move</span>
-                <span>Space · Jump</span>
-                <span>Shift · Sprint</span>
                 <span>E · Interact</span>
-                <span>F · Torch</span>
+                <span>M · Map</span>
                 {!hud.pointerLocked && <span>Click Viewport · Lock Camera</span>}
               </div>
             )}
@@ -510,6 +694,50 @@ export default function App() {
           isBowClass={hud.playerClass === 'archer'}
           playerClass={hud.playerClass}
           yaggaActive={hud.yaggaActive}
+          heavyCooldown={hud.heavyCooldown}
+          spinCooldown={hud.spinCooldown}
+          dashCooldown={hud.dashCooldown}
+        />
+      )}
+
+      {/* Portrait-to-Landscape Mobile Helper */}
+      {isTouchDevice && isPortrait && hud.screen === 'playing' && !landscapeDismissed && (
+        <div className="fixed inset-x-3 bottom-32 z-30 mx-auto max-w-sm border border-[#d4a34a]/70 bg-[#0d0b12]/95 p-4 text-center shadow-2xl">
+          <div className="flex items-center justify-center gap-2 text-sm font-semibold text-[#fbbf24]">
+            <RotateCw className="h-4 w-4" />
+            Landscape Mode Recommended
+          </div>
+          <p className="mt-1 text-xs text-[#cfc6b6]">
+            Rotate your phone sideways for full 3D view and comfortable thumb combat controls.
+          </p>
+          <div className="mt-3 flex justify-center gap-2">
+            <button
+              type="button"
+              onClick={enterLandscapeMode}
+              className="border border-[#d4a34a] bg-[#d4a34a] px-3 py-1.5 text-xs font-semibold text-[#0b090f]"
+            >
+              Fullscreen Landscape
+            </button>
+            <button
+              type="button"
+              onClick={() => setLandscapeDismissed(true)}
+              className="border border-white/20 px-3 py-1.5 text-xs text-[#ddd5c8]"
+            >
+              Continue
+            </button>
+          </div>
+        </div>
+      )}
+
+      {/* Expandable Full Realm Map */}
+      {showMap && engineRef.current && (
+        <FullRealmMapModal
+          map={hud.map}
+          areaId={hud.areaId}
+          areaName={hud.areaName}
+          discoveredAreas={hud.discoveredAreas}
+          engine={engineRef.current}
+          onClose={() => setShowMap(false)}
         />
       )}
 
@@ -520,6 +748,9 @@ export default function App() {
           engine={engineRef.current}
           settings={settings}
           onUpdateSettings={handleUpdateSettings}
+          showHelp={showHelp}
+          onOpenHelp={openHelp}
+          onCloseHelp={() => setShowHelp(false)}
         />
       )}
     </div>

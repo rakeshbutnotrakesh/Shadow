@@ -9,6 +9,7 @@ interface Projectile {
   life: number;
   fromPlayer: boolean;
   isArrow?: boolean;
+  pierce?: boolean;
   hitIds: Set<string>;
 }
 
@@ -160,6 +161,123 @@ export class CombatSystem {
       fromPlayer: true,
       isArrow: true,
       hitIds: new Set(),
+    });
+  }
+
+  public spawnPiercingArrow(
+    origin: THREE.Vector3,
+    direction: THREE.Vector3,
+    damage: number,
+    audio: AudioEngine
+  ): void {
+    audio.playBowRelease();
+    const arrowGroup = new THREE.Group();
+    const shaftMat = new THREE.MeshStandardMaterial({
+      color: 0xfef08a,
+      emissive: 0xf59e0b,
+      emissiveIntensity: 1.8,
+      roughness: 0.2,
+    });
+    const tipMat = new THREE.MeshStandardMaterial({
+      color: 0xffffff,
+      emissive: 0xfde047,
+      emissiveIntensity: 2.8,
+      metalness: 0.9,
+      roughness: 0.1,
+    });
+    const shaft = new THREE.Mesh(new THREE.CylinderGeometry(0.036, 0.036, 1.3, 6), shaftMat);
+    shaft.rotation.x = Math.PI / 2;
+    const tip = new THREE.Mesh(new THREE.ConeGeometry(0.085, 0.3, 6), tipMat);
+    tip.rotation.x = Math.PI / 2;
+    tip.position.z = 0.72;
+    arrowGroup.add(shaft, tip);
+
+    const flatDir = direction.clone().setY(0).normalize();
+    arrowGroup.position.copy(origin).add(new THREE.Vector3(0, 1.32, 0)).addScaledVector(flatDir, 0.75);
+    arrowGroup.rotation.y = Math.atan2(flatDir.x, flatDir.z);
+    this.scene.add(arrowGroup);
+
+    this.projectiles.push({
+      mesh: arrowGroup,
+      vel: flatDir.multiplyScalar(38),
+      damage,
+      life: 1.3,
+      fromPlayer: true,
+      isArrow: true,
+      pierce: true,
+      hitIds: new Set(),
+    });
+  }
+
+  public spawnArrowFan(
+    origin: THREE.Vector3,
+    direction: THREE.Vector3,
+    damage: number,
+    audio: AudioEngine
+  ): void {
+    const flatBase = direction.clone().setY(0).normalize();
+    const angles = [-0.18, 0, 0.18];
+    angles.forEach((ang, idx) => {
+      const dir = flatBase.clone().applyAxisAngle(new THREE.Vector3(0, 1, 0), ang);
+      if (idx === 0) {
+        this.spawnPlayerArrow(origin, dir, damage, audio);
+      } else {
+        const arrowGroup = new THREE.Group();
+        const shaftMat = new THREE.MeshStandardMaterial({
+          color: 0xfde68a,
+          emissive: 0xd97706,
+          emissiveIntensity: 0.9,
+        });
+        const tipMat = new THREE.MeshStandardMaterial({
+          color: 0xffffff,
+          emissive: 0xfbbf24,
+          emissiveIntensity: 2.0,
+        });
+        const shaft = new THREE.Mesh(new THREE.CylinderGeometry(0.022, 0.022, 0.95, 6), shaftMat);
+        shaft.rotation.x = Math.PI / 2;
+        const tip = new THREE.Mesh(new THREE.ConeGeometry(0.055, 0.22, 6), tipMat);
+        tip.rotation.x = Math.PI / 2;
+        tip.position.z = 0.56;
+        arrowGroup.add(shaft, tip);
+        arrowGroup.position.copy(origin).add(new THREE.Vector3(0, 1.32, 0)).addScaledVector(dir, 0.7);
+        arrowGroup.rotation.y = Math.atan2(dir.x, dir.z);
+        this.scene.add(arrowGroup);
+
+        this.projectiles.push({
+          mesh: arrowGroup,
+          vel: dir.multiplyScalar(30),
+          damage,
+          life: 1.4,
+          fromPlayer: true,
+          isArrow: true,
+          hitIds: new Set(),
+        });
+      }
+    });
+  }
+
+  public spawnGroundRingEffect(origin: THREE.Vector3, maxRadius: number, color: number): void {
+    const geom = new THREE.RingGeometry(0.55, 0.95, 28);
+    const mat = new THREE.MeshBasicMaterial({
+      color,
+      side: THREE.DoubleSide,
+      transparent: true,
+      opacity: 0.85,
+      depthWrite: false,
+    });
+    const mesh = new THREE.Mesh(geom, mat);
+    mesh.rotation.x = -Math.PI / 2;
+    mesh.position.set(origin.x, origin.y + 0.14, origin.z);
+    this.scene.add(mesh);
+
+    this.shockwaves.push({
+      mesh,
+      origin: origin.clone(),
+      radius: 0.7,
+      maxRadius,
+      speed: maxRadius * 3.4,
+      damage: 0,
+      hitPlayer: true,
     });
   }
 
@@ -463,7 +581,7 @@ export class CombatSystem {
               audio.playEnemyDeath();
               onEnemyKilled(enemy);
             }
-            if (p.isArrow) {
+            if (p.isArrow && !p.pierce) {
               remove = true;
               break;
             }
