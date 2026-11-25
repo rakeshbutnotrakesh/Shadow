@@ -20,6 +20,16 @@ export type EnemyActionEvent =
 const _toPlayer = new THREE.Vector3();
 const _move = new THREE.Vector3();
 
+const sharedEnemyGeoCache = new Map<string, THREE.BufferGeometry>();
+function getEnemyGeo(key: string, factory: () => THREE.BufferGeometry): THREE.BufferGeometry {
+  let geo = sharedEnemyGeoCache.get(key);
+  if (!geo) {
+    geo = factory();
+    sharedEnemyGeoCache.set(key, geo);
+  }
+  return geo;
+}
+
 export class EnemyEntity {
   public readonly id: string;
   public readonly type: EnemyType;
@@ -65,6 +75,8 @@ export class EnemyEntity {
   private haloRing2: THREE.Mesh | null = null;
   private detectOutlineMesh: THREE.Mesh;
   private bodyMaterials: THREE.MeshStandardMaterial[] = [];
+  private baseEmissives: Array<{ mat: THREE.MeshStandardMaterial; hex: number; intensity: number }> = [];
+  private isFlashing = false;
 
   constructor(config: EnemySpawnConfig, scene: THREE.Scene) {
     this.id = config.id;
@@ -135,7 +147,9 @@ export class EnemyEntity {
 
     // Shadow Detection highlight ring (visible only when Shadow Detection reaches enemy)
     this.detectOutlineMesh = new THREE.Mesh(
-      new THREE.RingGeometry(this.radius * 1.15, this.radius * 1.45, 24),
+      getEnemyGeo(`detect_ring_${this.radius.toFixed(2)}`, () =>
+        new THREE.RingGeometry(this.radius * 1.15, this.radius * 1.45, 24)
+      ),
       new THREE.MeshBasicMaterial({
         color: this.type === 'boss_kali' ? 0xef4444 : 0x38bdf8,
         side: THREE.DoubleSide,
@@ -154,6 +168,11 @@ export class EnemyEntity {
 
   private trackMat(mat: THREE.MeshStandardMaterial): THREE.MeshStandardMaterial {
     this.bodyMaterials.push(mat);
+    this.baseEmissives.push({
+      mat,
+      hex: mat.emissive.getHex(),
+      intensity: mat.emissiveIntensity,
+    });
     return mat;
   }
 
@@ -175,7 +194,7 @@ export class EnemyEntity {
 
     if (this.type === 'shadow_walker') {
       // Hunched 7-part spectral warrior
-      const legGeo = new THREE.CylinderGeometry(0.1, 0.07, 0.85, 8);
+      const legGeo = getEnemyGeo('sw_leg', () => new THREE.CylinderGeometry(0.1, 0.07, 0.85, 8));
       const lLeg = new THREE.Mesh(legGeo, shadowObsidian);
       lLeg.position.y = -0.42;
       this.leftLeg.position.set(-0.18, 0.85, 0);
@@ -185,17 +204,23 @@ export class EnemyEntity {
       this.rightLeg.position.set(0.18, 0.85, 0);
       this.rightLeg.add(rLeg);
 
-      const torso = new THREE.Mesh(new THREE.ConeGeometry(0.38, 1.05, 8), shadowObsidian);
+      const torso = new THREE.Mesh(
+        getEnemyGeo('sw_torso', () => new THREE.ConeGeometry(0.38, 1.05, 8)),
+        shadowObsidian
+      );
       torso.position.y = 1.25;
       torso.rotation.x = Math.PI;
       torso.castShadow = true;
 
-      const head = new THREE.Mesh(new THREE.OctahedronGeometry(0.22, 0), darkArmor);
+      const head = new THREE.Mesh(
+        getEnemyGeo('sw_head', () => new THREE.OctahedronGeometry(0.22, 0)),
+        darkArmor
+      );
       head.position.set(0, 1.82, 0.08);
       head.castShadow = true;
 
       // Horned crown
-      const hornGeo = new THREE.ConeGeometry(0.05, 0.34, 6);
+      const hornGeo = getEnemyGeo('sw_horn', () => new THREE.ConeGeometry(0.05, 0.34, 6));
       const hL = new THREE.Mesh(hornGeo, darkArmor);
       hL.position.set(-0.14, 2.04, 0.04);
       hL.rotation.z = 0.35;
@@ -204,13 +229,16 @@ export class EnemyEntity {
       hR.rotation.z = -0.35;
 
       // Glowing eyes
-      const eyeL = new THREE.Mesh(new THREE.SphereGeometry(0.04, 6, 6), eyeCrimson);
+      const eyeL = new THREE.Mesh(
+        getEnemyGeo('sw_eye', () => new THREE.SphereGeometry(0.04, 6, 6)),
+        eyeCrimson
+      );
       eyeL.position.set(-0.07, 1.84, 0.24);
       const eyeR = eyeL.clone();
       eyeR.position.x = 0.07;
 
       // Clawed arms
-      const armGeo = new THREE.CylinderGeometry(0.07, 0.03, 0.9, 6);
+      const armGeo = getEnemyGeo('sw_arm', () => new THREE.CylinderGeometry(0.07, 0.03, 0.9, 6));
       const lArmM = new THREE.Mesh(armGeo, shadowObsidian);
       lArmM.position.y = -0.42;
       this.leftArm.position.set(-0.36, 1.55, 0.05);
@@ -239,16 +267,28 @@ export class EnemyEntity {
         })
       );
 
-      const mantle = new THREE.Mesh(new THREE.ConeGeometry(0.42, 1.3, 8), spiritMat);
+      const mantle = new THREE.Mesh(
+        getEnemyGeo('ds_mantle', () => new THREE.ConeGeometry(0.42, 1.3, 8)),
+        spiritMat
+      );
       mantle.position.y = 1.25;
       mantle.castShadow = true;
 
-      const core = new THREE.Mesh(new THREE.OctahedronGeometry(0.24, 1), cyanEye);
+      const core = new THREE.Mesh(
+        getEnemyGeo('ds_core', () => new THREE.OctahedronGeometry(0.24, 1)),
+        cyanEye
+      );
       core.position.y = 1.65;
 
-      this.haloRing1 = new THREE.Mesh(new THREE.TorusGeometry(0.58, 0.035, 6, 20), darkArmor);
+      this.haloRing1 = new THREE.Mesh(
+        getEnemyGeo('ds_halo1', () => new THREE.TorusGeometry(0.58, 0.035, 6, 20)),
+        darkArmor
+      );
       this.haloRing1.position.y = 1.45;
-      this.haloRing2 = new THREE.Mesh(new THREE.TorusGeometry(0.45, 0.03, 6, 18), cyanEye);
+      this.haloRing2 = new THREE.Mesh(
+        getEnemyGeo('ds_halo2', () => new THREE.TorusGeometry(0.45, 0.03, 6, 18)),
+        cyanEye
+      );
       this.haloRing2.position.y = 1.45;
       this.haloRing2.rotation.x = Math.PI / 3;
 
@@ -268,7 +308,7 @@ export class EnemyEntity {
         })
       );
 
-      const legGeo = new THREE.BoxGeometry(0.32, 0.95, 0.34);
+      const legGeo = getEnemyGeo('tg_leg', () => new THREE.BoxGeometry(0.32, 0.95, 0.34));
       const lLeg = new THREE.Mesh(legGeo, stoneMat);
       lLeg.position.y = -0.46;
       this.leftLeg.position.set(-0.28, 0.95, 0);
@@ -278,37 +318,56 @@ export class EnemyEntity {
       this.rightLeg.position.set(0.28, 0.95, 0);
       this.rightLeg.add(rLeg);
 
-      const torso = new THREE.Mesh(new THREE.BoxGeometry(0.95, 1.05, 0.62), stoneMat);
+      const torso = new THREE.Mesh(
+        getEnemyGeo('tg_torso', () => new THREE.BoxGeometry(0.95, 1.05, 0.62)),
+        stoneMat
+      );
       torso.position.y = 1.5;
       torso.castShadow = true;
 
-      const chestCore = new THREE.Mesh(new THREE.OctahedronGeometry(0.18, 0), coreAmber);
+      const chestCore = new THREE.Mesh(
+        getEnemyGeo('tg_core', () => new THREE.OctahedronGeometry(0.18, 0)),
+        coreAmber
+      );
       chestCore.position.set(0, 1.55, 0.31);
 
-      const pauldronGeo = new THREE.DodecahedronGeometry(0.28, 0);
+      const pauldronGeo = getEnemyGeo('tg_pauldron', () => new THREE.DodecahedronGeometry(0.28, 0));
       const pL = new THREE.Mesh(pauldronGeo, bronzeMat);
       pL.position.set(-0.62, 1.92, 0);
       const pR = pL.clone();
       pR.position.x = 0.62;
 
-      const head = new THREE.Mesh(new THREE.BoxGeometry(0.42, 0.48, 0.42), bronzeMat);
+      const head = new THREE.Mesh(
+        getEnemyGeo('tg_head', () => new THREE.BoxGeometry(0.42, 0.48, 0.42)),
+        bronzeMat
+      );
       head.position.y = 2.28;
       head.castShadow = true;
-      const visor = new THREE.Mesh(new THREE.BoxGeometry(0.32, 0.08, 0.06), coreAmber);
+      const visor = new THREE.Mesh(
+        getEnemyGeo('tg_visor', () => new THREE.BoxGeometry(0.32, 0.08, 0.06)),
+        coreAmber
+      );
       visor.position.set(0, 2.32, 0.21);
 
       // Stone Gada / Mace on right arm
-      const lArmM = new THREE.Mesh(new THREE.BoxGeometry(0.24, 0.9, 0.24), stoneMat);
+      const tgArmGeo = getEnemyGeo('tg_arm', () => new THREE.BoxGeometry(0.24, 0.9, 0.24));
+      const lArmM = new THREE.Mesh(tgArmGeo, stoneMat);
       lArmM.position.y = -0.45;
       this.leftArm.position.set(-0.64, 1.85, 0);
       this.leftArm.add(lArmM);
 
-      const rArmM = new THREE.Mesh(new THREE.BoxGeometry(0.24, 0.9, 0.24), stoneMat);
+      const rArmM = new THREE.Mesh(tgArmGeo, stoneMat);
       rArmM.position.y = -0.45;
-      const maceShaft = new THREE.Mesh(new THREE.CylinderGeometry(0.05, 0.05, 1.35, 8), bronzeMat);
+      const maceShaft = new THREE.Mesh(
+        getEnemyGeo('tg_mace_shaft', () => new THREE.CylinderGeometry(0.05, 0.05, 1.35, 8)),
+        bronzeMat
+      );
       maceShaft.position.set(0, -0.85, 0.35);
       maceShaft.rotation.x = Math.PI / 2;
-      const maceHead = new THREE.Mesh(new THREE.SphereGeometry(0.24, 10, 8), bronzeMat);
+      const maceHead = new THREE.Mesh(
+        getEnemyGeo('tg_mace_head', () => new THREE.SphereGeometry(0.24, 10, 8)),
+        bronzeMat
+      );
       maceHead.position.set(0, -0.85, 1.0);
       this.rightArm.position.set(0.64, 1.85, 0);
       this.rightArm.add(rArmM, maceShaft, maceHead);
@@ -327,28 +386,38 @@ export class EnemyEntity {
       );
     } else if (this.type === 'ancient_beast') {
       // Quadruped shadow beast
-      const beastBody = new THREE.Mesh(new THREE.BoxGeometry(0.72, 0.56, 1.45), shadowObsidian);
+      const beastBody = new THREE.Mesh(
+        getEnemyGeo('ab_body', () => new THREE.BoxGeometry(0.72, 0.56, 1.45)),
+        shadowObsidian
+      );
       beastBody.position.set(0, 0.85, 0);
       beastBody.castShadow = true;
 
       // Dorsal spine ridges
+      const ridgeGeo = getEnemyGeo('ab_ridge', () => new THREE.ConeGeometry(0.08, 0.28, 5));
       for (let i = 0; i < 4; i++) {
-        const ridge = new THREE.Mesh(new THREE.ConeGeometry(0.08, 0.28, 5), darkArmor);
+        const ridge = new THREE.Mesh(ridgeGeo, darkArmor);
         ridge.position.set(0, 1.22, -0.45 + i * 0.3);
         ridge.rotation.x = -0.35;
         this.bodyGroup.add(ridge);
       }
 
-      const skull = new THREE.Mesh(new THREE.BoxGeometry(0.48, 0.42, 0.55), darkArmor);
+      const skull = new THREE.Mesh(
+        getEnemyGeo('ab_skull', () => new THREE.BoxGeometry(0.48, 0.42, 0.55)),
+        darkArmor
+      );
       skull.position.set(0, 0.98, 0.88);
       skull.castShadow = true;
 
-      const eyeL = new THREE.Mesh(new THREE.SphereGeometry(0.055, 6, 6), eyeCrimson);
+      const eyeL = new THREE.Mesh(
+        getEnemyGeo('ab_eye', () => new THREE.SphereGeometry(0.055, 6, 6)),
+        eyeCrimson
+      );
       eyeL.position.set(-0.14, 1.05, 1.12);
       const eyeR = eyeL.clone();
       eyeR.position.x = 0.14;
 
-      const legGeo = new THREE.CylinderGeometry(0.09, 0.06, 0.72, 8);
+      const legGeo = getEnemyGeo('ab_leg', () => new THREE.CylinderGeometry(0.09, 0.06, 0.72, 8));
       const fl = new THREE.Mesh(legGeo, shadowObsidian);
       fl.position.y = -0.35;
       this.leftLeg.position.set(-0.28, 0.72, 0.48);
@@ -384,7 +453,7 @@ export class EnemyEntity {
         })
       );
 
-      const legGeo = new THREE.CylinderGeometry(0.24, 0.18, 1.45, 10);
+      const legGeo = getEnemyGeo('bk_leg', () => new THREE.CylinderGeometry(0.24, 0.18, 1.45, 10));
       const lLeg = new THREE.Mesh(legGeo, darkArmor);
       lLeg.position.y = -0.72;
       this.leftLeg.position.set(-0.44, 1.45, 0);
@@ -394,27 +463,42 @@ export class EnemyEntity {
       this.rightLeg.position.set(0.44, 1.45, 0);
       this.rightLeg.add(rLeg);
 
-      const torso = new THREE.Mesh(new THREE.CylinderGeometry(0.88, 0.58, 1.7, 10), shadowObsidian);
+      const torso = new THREE.Mesh(
+        getEnemyGeo('bk_torso', () => new THREE.CylinderGeometry(0.88, 0.58, 1.7, 10)),
+        shadowObsidian
+      );
       torso.position.y = 2.3;
       torso.castShadow = true;
 
-      const core = new THREE.Mesh(new THREE.OctahedronGeometry(0.35, 0), eclipseCore);
+      const core = new THREE.Mesh(
+        getEnemyGeo('bk_core', () => new THREE.OctahedronGeometry(0.35, 0)),
+        eclipseCore
+      );
       core.position.set(0, 2.4, 0.58);
 
-      const pL = new THREE.Mesh(new THREE.ConeGeometry(0.52, 0.78, 6), goldTrim);
+      const pL = new THREE.Mesh(
+        getEnemyGeo('bk_pauldron', () => new THREE.ConeGeometry(0.52, 0.78, 6)),
+        goldTrim
+      );
       pL.position.set(-1.02, 3.02, 0);
       pL.rotation.z = 0.6;
       const pR = pL.clone();
       pR.position.x = 1.02;
       pR.rotation.z = -0.6;
 
-      const head = new THREE.Mesh(new THREE.OctahedronGeometry(0.4, 1), darkArmor);
+      const head = new THREE.Mesh(
+        getEnemyGeo('bk_head', () => new THREE.OctahedronGeometry(0.4, 1)),
+        darkArmor
+      );
       head.position.y = 3.45;
-      const crown = new THREE.Mesh(new THREE.TorusGeometry(0.44, 0.06, 6, 16), goldTrim);
+      const crown = new THREE.Mesh(
+        getEnemyGeo('bk_crown', () => new THREE.TorusGeometry(0.44, 0.06, 6, 16)),
+        goldTrim
+      );
       crown.rotation.x = Math.PI / 2;
       crown.position.y = 3.72;
       // Twin shadow horns of Kali Purusha
-      const hornGeo = new THREE.ConeGeometry(0.11, 0.65, 6);
+      const hornGeo = getEnemyGeo('bk_horn', () => new THREE.ConeGeometry(0.11, 0.65, 6));
       const hornL = new THREE.Mesh(hornGeo, eclipseCore);
       hornL.position.set(-0.34, 3.95, 0);
       hornL.rotation.z = 0.42;
@@ -422,19 +506,28 @@ export class EnemyEntity {
       hornR.position.x = 0.34;
       hornR.rotation.z = -0.42;
 
-      const eyeL = new THREE.Mesh(new THREE.SphereGeometry(0.07, 8, 8), eclipseCore);
+      const eyeL = new THREE.Mesh(
+        getEnemyGeo('bk_eye', () => new THREE.SphereGeometry(0.07, 8, 8)),
+        eclipseCore
+      );
       eyeL.position.set(-0.14, 3.48, 0.34);
       const eyeR = eyeL.clone();
       eyeR.position.x = 0.14;
 
       // Floating Eclipse Halo Rings behind back
-      this.haloRing1 = new THREE.Mesh(new THREE.TorusGeometry(1.75, 0.08, 8, 32), goldTrim);
+      this.haloRing1 = new THREE.Mesh(
+        getEnemyGeo('bk_halo1', () => new THREE.TorusGeometry(1.75, 0.08, 8, 32)),
+        goldTrim
+      );
       this.haloRing1.position.set(0, 2.7, -0.55);
-      this.haloRing2 = new THREE.Mesh(new THREE.TorusGeometry(1.32, 0.055, 8, 28), eclipseCore);
+      this.haloRing2 = new THREE.Mesh(
+        getEnemyGeo('bk_halo2', () => new THREE.TorusGeometry(1.32, 0.055, 8, 28)),
+        eclipseCore
+      );
       this.haloRing2.position.set(0, 2.7, -0.55);
 
       // Arms + Great Kali Yuga Halberd
-      const armGeo = new THREE.CylinderGeometry(0.19, 0.14, 1.4, 8);
+      const armGeo = getEnemyGeo('bk_arm', () => new THREE.CylinderGeometry(0.19, 0.14, 1.4, 8));
       const lArmM = new THREE.Mesh(armGeo, darkArmor);
       lArmM.position.y = -0.64;
       this.leftArm.position.set(-1.02, 2.9, 0);
@@ -442,10 +535,16 @@ export class EnemyEntity {
 
       const rArmM = new THREE.Mesh(armGeo, darkArmor);
       rArmM.position.y = -0.64;
-      const shaft = new THREE.Mesh(new THREE.CylinderGeometry(0.065, 0.065, 2.9, 8), goldTrim);
+      const shaft = new THREE.Mesh(
+        getEnemyGeo('bk_shaft', () => new THREE.CylinderGeometry(0.065, 0.065, 2.9, 8)),
+        goldTrim
+      );
       shaft.position.set(0, -1.25, 0.68);
       shaft.rotation.x = Math.PI / 2;
-      const blade = new THREE.Mesh(new THREE.BoxGeometry(0.14, 1.05, 0.48), eclipseCore);
+      const blade = new THREE.Mesh(
+        getEnemyGeo('bk_blade', () => new THREE.BoxGeometry(0.14, 1.05, 0.48)),
+        eclipseCore
+      );
       blade.position.set(0, -1.25, 1.95);
       this.rightArm.position.set(1.02, 2.9, 0);
       this.rightArm.add(rArmM, shaft, blade);
@@ -517,31 +616,21 @@ export class EnemyEntity {
       return events;
     }
 
-    // Hit flash feedback
+    // Hit flash feedback (only mutate materials while flashing or when restoring once)
     if (this.hitFlashTimer > 0) {
       this.hitFlashTimer -= dt;
-      for (const m of this.bodyMaterials) {
-        m.emissive.setHex(0xffffff);
-        m.emissiveIntensity = 0.85;
-      }
-    } else {
-      for (const m of this.bodyMaterials) {
-        if (m.color.getHex() === 0xff2e2e || m.color.getHex() === 0xef4444) {
-          m.emissive.setHex(0xdc2626);
-          m.emissiveIntensity = 2.2;
-        } else if (m.color.getHex() === 0x38bdf8) {
-          m.emissive.setHex(0x0ea5e9);
-          m.emissiveIntensity = 2.4;
-        } else if (m.color.getHex() === 0xf59e0b) {
-          m.emissive.setHex(0xd97706);
-          m.emissiveIntensity = 2.0;
-        } else if (m.color.getHex() === 0x1e293b) {
-          m.emissive.setHex(0x1d4ed8);
-          m.emissiveIntensity = 0.55;
-        } else {
-          m.emissive.setHex(0x000000);
-          m.emissiveIntensity = 0;
+      if (!this.isFlashing) {
+        this.isFlashing = true;
+        for (const m of this.bodyMaterials) {
+          m.emissive.setHex(0xffffff);
+          m.emissiveIntensity = 0.85;
         }
+      }
+    } else if (this.isFlashing) {
+      this.isFlashing = false;
+      for (const entry of this.baseEmissives) {
+        entry.mat.emissive.setHex(entry.hex);
+        entry.mat.emissiveIntensity = entry.intensity;
       }
     }
 
@@ -774,13 +863,16 @@ export class EnemyEntity {
 
   public dispose(scene: THREE.Scene): void {
     scene.remove(this.group);
-    this.group.traverse((obj) => {
-      if ((obj as THREE.Mesh).isMesh) {
-        const mesh = obj as THREE.Mesh;
-        mesh.geometry.dispose();
-        if (Array.isArray(mesh.material)) mesh.material.forEach((m) => m.dispose());
-        else mesh.material.dispose();
-      }
-    });
+    // Shared primitive geometries live in sharedEnemyGeoCache; only dispose per-instance materials
+    for (const mat of this.bodyMaterials) {
+      mat.dispose();
+    }
+    this.bodyMaterials = [];
+    this.baseEmissives = [];
+    if (Array.isArray(this.detectOutlineMesh.material)) {
+      this.detectOutlineMesh.material.forEach((m) => m.dispose());
+    } else {
+      this.detectOutlineMesh.material.dispose();
+    }
   }
 }

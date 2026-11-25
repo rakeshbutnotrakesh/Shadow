@@ -9,6 +9,11 @@ export function buildAreaQuests(
   const forestEnemies = enemiesDefeatedInArea.forest ?? 0;
   const templeEnemies = enemiesDefeatedInArea.temple ?? 0;
   const catacombEnemies = enemiesDefeatedInArea.catacombs ?? 0;
+  const stepwellEnemies = enemiesDefeatedInArea.sunken_stepwell ?? 0;
+  const ashramEnemies = enemiesDefeatedInArea.ashram_ruins ?? 0;
+  const fortressEnemies = enemiesDefeatedInArea.asura_fortress ?? 0;
+  const observatoryEnemies = enemiesDefeatedInArea.astral_observatory ?? 0;
+  const cavernsEnemies = enemiesDefeatedInArea.serpent_caverns ?? 0;
 
   const qForestDone =
     completedQuestIds.includes('q_forest') ||
@@ -25,6 +30,21 @@ export function buildAreaQuests(
     completedQuestIds.includes('q_catacombs') ||
     (artifacts.includes('ancient_yantra') && catacombEnemies >= 3);
 
+  const qStepwellDone =
+    completedQuestIds.includes('q_stepwell') || stepwellEnemies >= 3;
+
+  const qAshramDone =
+    completedQuestIds.includes('q_ashram') || ashramEnemies >= 3;
+
+  const qFortressDone =
+    completedQuestIds.includes('q_fortress') || fortressEnemies >= 3;
+
+  const qObservatoryDone =
+    completedQuestIds.includes('q_observatory') || observatoryEnemies >= 3;
+
+  const qCavernsDone =
+    completedQuestIds.includes('q_caverns') || cavernsEnemies >= 3;
+
   const qSanctumDone =
     completedQuestIds.includes('q_sanctum') ||
     (flags.purifiedMonoliths.length >= 3 && artifacts.includes('sacred_mantra'));
@@ -39,7 +59,7 @@ export function buildAreaQuests(
       areaId: 'forest',
       title: 'I. Echoes in the Grove',
       description:
-        'Cleanse the Forgotten Forest of shadow threats and recover the Rudraksha beneath the banyan shrine.',
+        'Cleanse the Forgotten Forest of shadow threats, loot the Relic Chests, and recover the Rudraksha beneath the banyan shrine.',
       xpReward: 120,
       completed: qForestDone,
       objectives: [
@@ -95,7 +115,7 @@ export function buildAreaQuests(
       areaId: 'catacombs',
       title: 'III. Beneath the Roots',
       description:
-        'Navigate the subterranean tunnels, survive the awakened beasts, and retrieve the Ancient Yantra.',
+        'Navigate the subterranean tunnels, survive the awakened beasts, and retrieve the Ancient Yantra to open the Sunken Stepwell.',
       xpReward: 240,
       completed: qCatacombsDone,
       objectives: [
@@ -114,12 +134,102 @@ export function buildAreaQuests(
       ],
     },
     {
+      id: 'q_stepwell',
+      areaId: 'sunken_stepwell',
+      title: 'IV. Waters of Chand-Baori',
+      description:
+        'Purge shadow threats patrolling the Sunken Stepwell to unseal the northern passage to the Shattered Ashram.',
+      xpReward: 280,
+      completed: qStepwellDone,
+      objectives: [
+        {
+          id: 'obj_stepwell_foes',
+          label: `Banish Stepwell Shadows (${Math.min(3, stepwellEnemies)}/3)`,
+          completed: stepwellEnemies >= 3,
+          progress: stepwellEnemies,
+          target: 3,
+        },
+      ],
+    },
+    {
+      id: 'q_ashram',
+      areaId: 'ashram_ruins',
+      title: 'V. Hermitage of Eternal Fire',
+      description:
+        'Defend the Shattered Rishi Ashram, collect chest weapons, and open the gate toward the Obsidian Fortress.',
+      xpReward: 320,
+      completed: qAshramDone,
+      objectives: [
+        {
+          id: 'obj_ashram_foes',
+          label: `Clear Ashram Threats (${Math.min(3, ashramEnemies)}/3)`,
+          completed: ashramEnemies >= 3,
+          progress: ashramEnemies,
+          target: 3,
+        },
+      ],
+    },
+    {
+      id: 'q_fortress',
+      areaId: 'asura_fortress',
+      title: 'VI. Gate of the Asura Rampart',
+      description:
+        'Break the vanguard guarding the Obsidian Fortress to reach the celestial Yantra Observatory.',
+      xpReward: 360,
+      completed: qFortressDone,
+      objectives: [
+        {
+          id: 'obj_fortress_foes',
+          label: `Defeat Fortress Guardians (${Math.min(3, fortressEnemies)}/3)`,
+          completed: fortressEnemies >= 3,
+          progress: fortressEnemies,
+          target: 3,
+        },
+      ],
+    },
+    {
+      id: 'q_observatory',
+      areaId: 'astral_observatory',
+      title: 'VII. Alignment of Samrat Yantra',
+      description:
+        'Cleanse the Astral Observatory under rotating cosmic rings and open the descent into Naga Patala Caverns.',
+      xpReward: 420,
+      completed: qObservatoryDone,
+      objectives: [
+        {
+          id: 'obj_observatory_foes',
+          label: `Banish Observatory Shadows (${Math.min(3, observatoryEnemies)}/3)`,
+          completed: observatoryEnemies >= 3,
+          progress: observatoryEnemies,
+          target: 3,
+        },
+      ],
+    },
+    {
+      id: 'q_caverns',
+      areaId: 'serpent_caverns',
+      title: 'VIII. Vaults of Vasuki',
+      description:
+        'Traverse the bioluminescent Naga Caverns and clear its guardians to reach the Cursed Sanctum.',
+      xpReward: 480,
+      completed: qCavernsDone,
+      objectives: [
+        {
+          id: 'obj_caverns_foes',
+          label: `Clear Cavern Threats (${Math.min(3, cavernsEnemies)}/3)`,
+          completed: cavernsEnemies >= 3,
+          progress: cavernsEnemies,
+          target: 3,
+        },
+      ],
+    },
+    {
       id: 'q_sanctum',
       areaId: 'sanctum',
-      title: 'IV. The Fractured Vow',
+      title: 'IX. The Fractured Vow',
       description:
         'Purify the three corrupted monoliths in the Cursed Sanctum and recover the Sacred Mantra.',
-      xpReward: 320,
+      xpReward: 560,
       completed: qSanctumDone,
       objectives: [
         {
@@ -139,10 +249,10 @@ export function buildAreaQuests(
     {
       id: 'q_final',
       areaId: 'final_chamber',
-      title: 'V. Sovereign of Kalyug',
+      title: 'X. Sovereign of Kalyug',
       description:
         'Claim the Divine Amulet at the chamber threshold and banish Kali Purusha, Sovereign of Kalyug.',
-      xpReward: 800,
+      xpReward: 1000,
       completed: qFinalDone,
       objectives: [
         {

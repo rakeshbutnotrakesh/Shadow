@@ -67,6 +67,9 @@ const INITIAL_HUD: HudSnapshot = {
   forgeShards: 2,
   forgedWeaponBonus: 0,
   forgedWeaponsCount: 0,
+  collectedWeaponIds: [],
+  equippedChestWeaponId: null,
+  chestWeaponBonus: 0,
   classSpecialCooldown: 0,
   yaggaActive: false,
   map: {

@@ -1,10 +1,16 @@
 import * as THREE from 'three';
 import { VedaMantra } from './mantras';
+import type { ChestWeaponDef } from './weapons';
 
 export type AreaId =
   | 'forest'
   | 'temple'
   | 'catacombs'
+  | 'sunken_stepwell'
+  | 'ashram_ruins'
+  | 'asura_fortress'
+  | 'astral_observatory'
+  | 'serpent_caverns'
   | 'sanctum'
   | 'final_chamber';
 
@@ -135,9 +141,13 @@ export interface SaveData {
   flags: WorldFlags;
   completedQuestIds: string[];
   enemiesDefeated: number;
+  enemiesDefeatedInArea?: Partial<Record<AreaId, number>>;
   forgeShards?: number;
   forgedWeaponBonus?: number;
   forgedWeaponsCount?: number;
+  collectedWeaponIds?: string[];
+  equippedChestWeaponId?: string | null;
+  chestWeaponBonus?: number;
 }
 
 export interface GameSettings {
@@ -172,6 +182,7 @@ export interface InteractiveObject {
     | 'mandala_altar'
     | 'monolith'
     | 'chest'
+    | 'weapon_drop'
     | 'lore'
     | 'shrine'
     | 'trial_shrine';
@@ -182,6 +193,7 @@ export interface InteractiveObject {
   mesh: THREE.Object3D;
   beaconMesh?: THREE.Object3D;
   artifactId?: ArtifactId;
+  weaponDrop?: ChestWeaponDef;
   targetArea?: AreaId;
   locked?: boolean;
   lockReason?: string;
@@ -271,6 +283,9 @@ export interface HudSnapshot {
   forgeShards: number;
   forgedWeaponBonus: number;
   forgedWeaponsCount: number;
+  collectedWeaponIds: string[];
+  equippedChestWeaponId: string | null;
+  chestWeaponBonus: number;
   classSpecialCooldown: number;
   yaggaActive: boolean;
   map: MapSnapshot;

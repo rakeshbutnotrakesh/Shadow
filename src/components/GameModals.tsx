@@ -18,6 +18,7 @@ import { KalyugGameEngine } from '../game/main';
 import { ALL_PET_IDS, PETS } from '../game/pet';
 import { ABILITIES, ALL_ABILITY_IDS } from '../game/progression';
 import { AreaId, ClassId, GameSettings, HudSnapshot } from '../game/types';
+import { AREA_NAMES, CHEST_WEAPONS } from '../game/weapons';
 
 interface GameModalsProps {
   hud: HudSnapshot;
@@ -29,13 +30,7 @@ interface GameModalsProps {
   onCloseHelp: () => void;
 }
 
-const AREA_LABELS: Record<AreaId, string> = {
-  forest: 'Forgotten Forest',
-  temple: 'Ancient Temple',
-  catacombs: 'Underground Catacombs',
-  sanctum: 'Cursed Sanctum',
-  final_chamber: 'Final Chamber',
-};
+const AREA_LABELS: Record<AreaId, string> = AREA_NAMES;
 
 const TANDAVA_VERSES = [
   {
@@ -84,7 +79,17 @@ export const GameModals: React.FC<GameModalsProps> = ({
       temple:
         'Use the Catacombs Portal in the temple courtyard ([E]) once the Trishul Fragment is claimed.',
       catacombs:
-        'Use the Sanctum Portal ([E]) once the Ancient Yantra is recovered.',
+        'Use the Sunken Stepwell Portal ([E]) once the Ancient Yantra is recovered.',
+      sunken_stepwell:
+        'Banish 3 Stepwell Shadows and enter the northern portal ([E]) to the Shattered Ashram.',
+      ashram_ruins:
+        'Clear 3 Ashram Threats and enter the northern portal ([E]) to the Obsidian Fortress.',
+      asura_fortress:
+        'Defeat 3 Fortress Guardians and enter the northern portal ([E]) to the Astral Observatory.',
+      astral_observatory:
+        'Banish 3 Observatory Shadows and descend ([E]) into the Naga Caverns.',
+      serpent_caverns:
+        'Clear 3 Cavern Threats and enter the northern portal ([E]) to the Cursed Sanctum.',
       sanctum:
         'Purify all 3 Corrupted Monoliths to unseal the northern Eclipse Gate to the Final Chamber.',
       final_chamber:
@@ -116,26 +121,51 @@ export const GameModals: React.FC<GameModalsProps> = ({
       {
         id: 'forest',
         step: '01. Forgotten Forest',
-        goal: 'Claim the Rudraksha beneath the banyan shrine, banish 3 shadows, and enter the Temple Gate.',
+        goal: 'Claim the Rudraksha, open Relic Chests for random weapon drops, and enter the Temple Gate.',
       },
       {
         id: 'temple',
         step: '02. Ancient Temple',
-        goal: 'Ring the Temple Bell, align the 3 Mandala Altar rings to 0°, and claim the Trishul Fragment.',
+        goal: 'Ring the Temple Bell, align the Mandala Altar, and claim the Trishul Fragment.',
       },
       {
         id: 'catacombs',
         step: '03. Underground Catacombs',
-        goal: 'Survive the tunnels, defeat guardians, and recover the Ancient Yantra.',
+        goal: 'Survive the vaults, loot chests, and recover the Ancient Yantra.',
+      },
+      {
+        id: 'sunken_stepwell',
+        step: '04. Sunken Stepwell',
+        goal: 'Purge 3 Stepwell Shadows around the Chand-Baori lotus pool and collect box weapons.',
+      },
+      {
+        id: 'ashram_ruins',
+        step: '05. Shattered Ashram',
+        goal: 'Defend the Rishi Gurukul courtyard and clear 3 Ashram threats to advance.',
+      },
+      {
+        id: 'asura_fortress',
+        step: '06. Obsidian Fortress',
+        goal: 'Break 3 Asura Rampart guardians and loot high-tier Epic/Mythic chest weapons.',
+      },
+      {
+        id: 'astral_observatory',
+        step: '07. Astral Observatory',
+        goal: 'Cleanse 3 shadows beneath the rotating Samrat Yantra rings.',
+      },
+      {
+        id: 'serpent_caverns',
+        step: '08. Naga Caverns',
+        goal: 'Clear 3 bioluminescent cavern guardians to reach the Cursed Sanctum.',
       },
       {
         id: 'sanctum',
-        step: '04. Cursed Sanctum',
-        goal: 'Purify all 3 Corrupted Monoliths to open the Eclipse Gate and retrieve the Sacred Mantra.',
+        step: '09. Cursed Sanctum',
+        goal: 'Purify all 3 Corrupted Monoliths to unseal the Eclipse Gate and claim Sacred Mantra.',
       },
       {
         id: 'final_chamber',
-        step: '05. Final Chamber',
+        step: '10. Final Chamber',
         goal: 'Claim the Divine Amulet and banish Kali Purusha, Sovereign of Kalyug.',
       },
     ];
@@ -218,10 +248,10 @@ export const GameModals: React.FC<GameModalsProps> = ({
               )}
             </div>
 
-            {/* 5-Realm Roadmap */}
+            {/* 10-Realm Roadmap */}
             <div>
               <h3 className="mb-2 font-display text-sm font-semibold text-[#f5efe4]">
-                5-Realm Progression Roadmap
+                10-Realm Progression Roadmap
               </h3>
               <div className="space-y-2">
                 {realmRoadmap.map((r) => {
@@ -1067,6 +1097,73 @@ export const GameModals: React.FC<GameModalsProps> = ({
                   </div>
                 </div>
 
+                {/* Collected Weapons Dropped From Relic Boxes */}
+                <div className="border border-[#f472b6]/40 bg-[#15101b] p-4">
+                  <div className="mb-3 flex flex-wrap items-center justify-between gap-2">
+                    <h4 className="font-display text-base font-semibold text-[#f9a8d4]">
+                      Box Weapons Arsenal ({hud.collectedWeaponIds.length} Collected)
+                    </h4>
+                    <span className="font-mono-num text-xs text-[#fbbf24]">
+                      Active Box Bonus: +{hud.chestWeaponBonus} ATK
+                    </span>
+                  </div>
+                  {hud.collectedWeaponIds.length === 0 ? (
+                    <p className="text-xs text-[#a89f92]">
+                      Open Relic Chests across any of the 10 realms to drop random Rare, Epic, Mythic & Divya weapons! Collect them in 3D to equip and fight onward.
+                    </p>
+                  ) : (
+                    <div className="grid gap-2.5 sm:grid-cols-2">
+                      {hud.collectedWeaponIds.map((wid) => {
+                        const w = CHEST_WEAPONS.find((item) => item.id === wid);
+                        if (!w) return null;
+                        const equipped = hud.equippedChestWeaponId === wid;
+                        return (
+                          <div
+                            key={wid}
+                            className={`flex items-center justify-between gap-3 border p-3 ${
+                              equipped
+                                ? 'border-[#fbbf24] bg-[#21182c]'
+                                : 'border-white/12 bg-[#110d17]'
+                            }`}
+                          >
+                            <div>
+                              <div className="flex items-center gap-2">
+                                <span
+                                  className="text-[10px] font-bold uppercase"
+                                  style={{ color: w.accentColor }}
+                                >
+                                  {w.rarity}
+                                </span>
+                                <span className="text-xs font-semibold text-[#f5efe4]">
+                                  {w.name}
+                                </span>
+                              </div>
+                              <div className="text-[11px] font-medium text-[#fbbf24]">
+                                +{w.powerBonus} Attack Power
+                              </div>
+                              <div className="mt-0.5 text-[11px] text-[#a89f92]">
+                                {w.description}
+                              </div>
+                            </div>
+                            <button
+                              type="button"
+                              disabled={equipped}
+                              onClick={() => engine.equipChestWeapon(wid)}
+                              className={`shrink-0 border px-3 py-1.5 text-xs font-semibold ${
+                                equipped
+                                  ? 'border-[#fbbf24]/50 bg-[#fbbf24]/15 text-[#fbbf24]'
+                                  : 'border-[#d4a34a] bg-[#d4a34a] text-[#0b090f] hover:bg-[#e5b85c]'
+                              }`}
+                            >
+                              {equipped ? 'Equipped' : 'Equip'}
+                            </button>
+                          </div>
+                        );
+                      })}
+                    </div>
+                  )}
+                </div>
+
                 {hud.playerClass === 'blacksmith' && (
                   <div className="border border-[#f97316]/50 bg-[#19110e] p-4">
                     <div className="mb-3 flex flex-wrap items-center justify-between gap-2">
@@ -1506,7 +1603,7 @@ export const GameModals: React.FC<GameModalsProps> = ({
             Kali Purusha Banished!
           </h2>
           <p className="mt-3 text-sm leading-relaxed text-[#cfc6b6]">
-            Kali Purusha, Sovereign of Kalyug, shatters into golden light. Across all five sacred
+            Kali Purusha, Sovereign of Kalyug, shatters into golden light. Across all ten sacred
             realms, Dharma is restored.
           </p>
 

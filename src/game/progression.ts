@@ -230,7 +230,8 @@ export function computePlayerStats(
   shivaTandavaSeen = false,
   isGod = false,
   playerClass: ClassId = 'warrior',
-  forgedWeaponBonus = 0
+  forgedWeaponBonus = 0,
+  chestWeaponBonus = 0
 ): ComputedPlayerStats {
   const cls = PLAYER_CLASSES[playerClass] ?? PLAYER_CLASSES.warrior;
   const hasRudraksha = artifacts.includes('rudraksha');
@@ -353,7 +354,7 @@ export function computePlayerStats(
     maxEnergy,
     moveSpeedMultiplier,
     damageMultiplier,
-    weaponFlatBonus: bless.weaponPowerBonus + forgedWeaponBonus,
+    weaponFlatBonus: bless.weaponPowerBonus + forgedWeaponBonus + chestWeaponBonus,
     damageReduction,
     healthRegenPerSec,
     energyRegenPerSec,

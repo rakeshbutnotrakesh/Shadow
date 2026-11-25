@@ -49,6 +49,7 @@ import {
   WorldFlags,
 } from './types';
 import { InputManager } from './ui';
+import { CHEST_WEAPONS, rollRandomBoxWeapon } from './weapons';
 import { BuiltArea, WorldBuilder } from './world';
 
 const _fwd = new THREE.Vector3();
@@ -123,6 +124,11 @@ export class KalyugGameEngine {
     forest: 0,
     temple: 0,
     catacombs: 0,
+    sunken_stepwell: 0,
+    ashram_ruins: 0,
+    asura_fortress: 0,
+    astral_observatory: 0,
+    serpent_caverns: 0,
     sanctum: 0,
     final_chamber: 0,
   };
@@ -146,6 +152,9 @@ export class KalyugGameEngine {
   private forgeShards = 2;
   private forgedWeaponBonus = 0;
   private forgedWeaponsCount = 0;
+  private collectedWeaponIds: string[] = [];
+  private equippedChestWeaponId: string | null = null;
+  private chestWeaponBonus = 0;
   private activeVedaMantra: VedaMantra | null = null;
   private vedaMantraTimer = 0;
 
@@ -156,6 +165,10 @@ export class KalyugGameEngine {
   private disposed = false;
   private detachInputs: (() => void) | null = null;
   private onToggleMap?: () => void;
+  private hasSaveCached = hasSavedGame();
+  private saveQueued = false;
+  private saveFlushTimer = 0;
+  private needsStaticRender = true;
 
   constructor(
     container: HTMLElement,
@@ -237,7 +250,9 @@ export class KalyugGameEngine {
     this.audio.startMusic();
 
     if (!this.isSoftwareGl) {
+      this.combat.prepareWarmUp();
       this.renderer.compile(this.scene, this.camCtrl.camera);
+      this.combat.finishWarmUp();
     }
 
     window.addEventListener('resize', this.handleResize);
@@ -258,7 +273,8 @@ export class KalyugGameEngine {
       this.shivaTandavaSeen,
       this.isGod,
       this.playerClass,
-      this.forgedWeaponBonus
+      this.forgedWeaponBonus,
+      this.chestWeaponBonus
     );
     return this.stats;
   }
@@ -272,6 +288,7 @@ export class KalyugGameEngine {
     const h = this.container.clientHeight || window.innerHeight;
     this.camCtrl.setAspect(w / h);
     this.renderer.setSize(w, h);
+    this.needsStaticRender = true;
   };
 
   // =========================================================================
@@ -312,7 +329,7 @@ export class KalyugGameEngine {
     this.forgeShards -= recipe.shardCost;
     this.forgedWeaponsCount += 1;
     this.forgedWeaponBonus += recipe.powerGain;
-    this.activeWeaponName = `${recipe.name} (+${this.forgedWeaponBonus})`;
+    this.activeWeaponName = `${recipe.name} (+${this.forgedWeaponBonus + this.chestWeaponBonus})`;
     this.recomputeStats();
     this.audio.playAnvilForge();
     this.combat.spawnBurst(
@@ -326,6 +343,25 @@ export class KalyugGameEngine {
       'gold'
     );
     this.grantXp(45);
+    this.saveProgress();
+    this.emitHud();
+  }
+
+  public equipChestWeapon(weaponId: string): void {
+    if (!this.collectedWeaponIds.includes(weaponId)) return;
+    const wpn = CHEST_WEAPONS.find((w) => w.id === weaponId);
+    if (!wpn) return;
+    this.equippedChestWeaponId = wpn.id;
+    this.chestWeaponBonus = wpn.powerBonus;
+    this.activeWeaponName = `${wpn.name} (+${wpn.powerBonus})`;
+    this.player.setWeaponAccent(wpn.accentHex);
+    this.recomputeStats();
+    this.audio.playAnvilForge();
+    this.showToast(
+      `Equipped: ${wpn.name}`,
+      `${wpn.rarity} Box Weapon · +${wpn.powerBonus} Attack Power`,
+      'gold'
+    );
     this.saveProgress();
     this.emitHud();
   }
@@ -589,9 +625,24 @@ export class KalyugGameEngine {
     };
     this.completedQuestIds = [...data.completedQuestIds];
     this.enemiesDefeated = data.enemiesDefeated ?? 0;
+    this.enemiesDefeatedInArea = {
+      forest: data.enemiesDefeatedInArea?.forest ?? 0,
+      temple: data.enemiesDefeatedInArea?.temple ?? 0,
+      catacombs: data.enemiesDefeatedInArea?.catacombs ?? 0,
+      sunken_stepwell: data.enemiesDefeatedInArea?.sunken_stepwell ?? 0,
+      ashram_ruins: data.enemiesDefeatedInArea?.ashram_ruins ?? 0,
+      asura_fortress: data.enemiesDefeatedInArea?.asura_fortress ?? 0,
+      astral_observatory: data.enemiesDefeatedInArea?.astral_observatory ?? 0,
+      serpent_caverns: data.enemiesDefeatedInArea?.serpent_caverns ?? 0,
+      sanctum: data.enemiesDefeatedInArea?.sanctum ?? 0,
+      final_chamber: data.enemiesDefeatedInArea?.final_chamber ?? 0,
+    };
     this.forgeShards = data.forgeShards ?? 2;
     this.forgedWeaponBonus = data.forgedWeaponBonus ?? 0;
     this.forgedWeaponsCount = data.forgedWeaponsCount ?? 0;
+    this.collectedWeaponIds = [...(data.collectedWeaponIds ?? [])];
+    this.equippedChestWeaponId = data.equippedChestWeaponId ?? null;
+    this.chestWeaponBonus = data.chestWeaponBonus ?? 0;
     this.classSpecialCooldown = 0;
 
     this.syncMilestoneAbilities();
@@ -604,6 +655,10 @@ export class KalyugGameEngine {
     );
 
     this.player.setClassAppearance(this.playerClass);
+    if (this.equippedChestWeaponId) {
+      const wpn = CHEST_WEAPONS.find((w) => w.id === this.equippedChestWeaponId);
+      if (wpn) this.player.setWeaponAccent(wpn.accentHex);
+    }
     this.player.setGodMode(this.isGod);
     this.pet.setPet(this.petId, this.player.position);
     this.player.health = Math.min(this.stats.maxHealth, Math.max(15, data.health));
@@ -661,11 +716,25 @@ export class KalyugGameEngine {
       },
       completedQuestIds: [...this.completedQuestIds],
       enemiesDefeated: this.enemiesDefeated,
+      enemiesDefeatedInArea: { ...this.enemiesDefeatedInArea },
       forgeShards: this.forgeShards,
       forgedWeaponBonus: this.forgedWeaponBonus,
       forgedWeaponsCount: this.forgedWeaponsCount,
+      collectedWeaponIds: [...this.collectedWeaponIds],
+      equippedChestWeaponId: this.equippedChestWeaponId,
+      chestWeaponBonus: this.chestWeaponBonus,
     };
     writeSaveData(payload);
+    this.hasSaveCached = true;
+    this.saveQueued = false;
+    this.saveFlushTimer = 0;
+  }
+
+  private queueSave(): void {
+    this.saveQueued = true;
+    if (this.saveFlushTimer <= 0) {
+      this.saveFlushTimer = 1.2;
+    }
   }
 
   public manualSave(): void {
@@ -678,6 +747,10 @@ export class KalyugGameEngine {
     if (next !== 'playing') {
       this.input.releasePointerLock();
       this.input.clearKeys();
+      if (this.saveQueued) {
+        this.saveProgress();
+      }
+      this.needsStaticRender = true;
     }
     this.screen = next;
     this.emitHud();
@@ -953,7 +1026,12 @@ export class KalyugGameEngine {
       this.grantXp(75);
     }
 
-    const built = this.worldBuilder.buildArea(areaId, this.flags, this.artifacts);
+    const built = this.worldBuilder.buildArea(
+      areaId,
+      this.flags,
+      this.artifacts,
+      this.enemiesDefeatedInArea[areaId] ?? 0
+    );
     this.currentArea = built;
 
     for (const spawn of built.enemySpawns) {
@@ -1020,6 +1098,8 @@ export class KalyugGameEngine {
       this.input.releasePointerLock();
       this.input.clearKeys();
       this.screen = 'levelup';
+      this.needsStaticRender = true;
+      this.queueSave();
     }
   }
 
@@ -1030,20 +1110,50 @@ export class KalyugGameEngine {
       this.enemiesDefeatedInArea,
       this.completedQuestIds
     );
+    let anyCompleted = false;
     for (const q of quests) {
       if (q.completed && !this.completedQuestIds.includes(q.id)) {
         this.completedQuestIds.push(q.id);
         this.showToast(`Quest Completed: ${q.title}`, `+${q.xpReward} XP`, 'gold');
         this.grantXp(q.xpReward);
-        this.saveProgress();
+        anyCompleted = true;
       }
+    }
+    if (anyCompleted) {
+      this.queueSave();
     }
   }
 
   private handleEnemyKilled = (enemy: EnemyEntity): void => {
     this.enemiesDefeated += 1;
-    this.enemiesDefeatedInArea[this.areaId] = (this.enemiesDefeatedInArea[this.areaId] ?? 0) + 1;
+    const areaKills = (this.enemiesDefeatedInArea[this.areaId] ?? 0) + 1;
+    this.enemiesDefeatedInArea[this.areaId] = areaKills;
     this.grantXp(enemy.xpReward);
+
+    // Unseal kill-gated portals in Realms 4..8 once 3 foes are cleared
+    const killGatedAreas: AreaId[] = [
+      'sunken_stepwell',
+      'ashram_ruins',
+      'asura_fortress',
+      'astral_observatory',
+      'serpent_caverns',
+    ];
+    if (killGatedAreas.includes(this.areaId) && this.currentArea) {
+      for (const it of this.currentArea.interactives) {
+        if (it.kind === 'portal' && it.locked) {
+          if (areaKills >= 3) {
+            it.locked = false;
+            it.lockReason = '';
+            const mat = (it.mesh as THREE.Mesh).material as THREE.MeshBasicMaterial;
+            mat.color.setHex(0xd4a34a);
+            mat.opacity = 0.75;
+            this.showToast('Portal Unsealed!', `Proceed to ${it.label} [E]`, 'gold');
+          } else {
+            it.lockReason = `Defeat 3 Shadows in this realm (${areaKills}/3)`;
+          }
+        }
+      }
+    }
 
     if (this.playerClass === 'blacksmith' || Math.random() < 0.45) {
       this.forgeShards += 1;
@@ -1070,6 +1180,7 @@ export class KalyugGameEngine {
         if (!this.disposed) {
           this.input.releasePointerLock();
           this.screen = 'victory';
+          this.needsStaticRender = true;
           this.emitHud();
         }
       }, 1200);
@@ -1077,6 +1188,7 @@ export class KalyugGameEngine {
     }
 
     this.checkQuestCompletions();
+    this.queueSave();
   };
 
   private handlePlayerDamaged = (rawDamage: number): void => {
@@ -1128,7 +1240,7 @@ export class KalyugGameEngine {
           if (
             it.kind === 'portal' &&
             ((obj.artifactId === 'trishul_fragment' && it.targetArea === 'catacombs') ||
-              (obj.artifactId === 'ancient_yantra' && it.targetArea === 'sanctum'))
+              (obj.artifactId === 'ancient_yantra' && it.targetArea === 'sunken_stepwell'))
           ) {
             it.locked = false;
             const mat = (it.mesh as THREE.Mesh).material as THREE.MeshBasicMaterial;
@@ -1220,10 +1332,33 @@ export class KalyugGameEngine {
       this.consumables.somaVial += 1;
       this.forgeShards += 2;
       this.audio.playArtifactPickup();
-      this.combat.spawnBurst(obj.position.clone(), 0x38bdf8, 18);
-      this.showToast('Relic Chest Opened', '+2 Prana · +1 Soma · +2 Forge Shards · +80 XP', 'spirit');
+      this.combat.spawnBurst(obj.position.clone(), 0xfbbf24, 22);
+
+      // Drop a random 3D weapon right beside the chest for the player to collect & equip!
+      if (this.currentArea) {
+        const dropped = rollRandomBoxWeapon(this.level, this.areaId, this.collectedWeaponIds);
+        const dirToPlayer = new THREE.Vector3()
+          .subVectors(this.player.position, obj.position)
+          .setY(0);
+        if (dirToPlayer.lengthSq() < 0.01) dirToPlayer.set(0, 0, 1);
+        dirToPlayer.normalize();
+        const dropPos = obj.position
+          .clone()
+          .addScaledVector(dirToPlayer, 1.75);
+        dropPos.y = this.currentArea.groundHeightAt(dropPos.x, dropPos.z);
+        this.currentArea.spawnWeaponDrop(dropPos, dropped);
+        this.showToast(
+          `Box Dropped: ${dropped.name}!`,
+          `${dropped.rarity} (+${dropped.powerBonus} ATK) · Walk over or press [E] to collect!`,
+          'gold'
+        );
+      } else {
+        this.showToast('Relic Chest Opened', '+2 Prana · +1 Soma · +2 Forge Shards · +80 XP', 'spirit');
+      }
       this.grantXp(80);
       this.saveProgress();
+    } else if (obj.kind === 'weapon_drop' && !obj.consumed) {
+      this.collectDroppedWeapon(obj);
     } else if (obj.kind === 'lore') {
       this.audio.playShieldActivate();
       this.loreModal = {
@@ -1249,6 +1384,31 @@ export class KalyugGameEngine {
     this.emitHud();
   }
 
+  private collectDroppedWeapon(obj: InteractiveObject): void {
+    const weapon = obj.weaponDrop;
+    if (!weapon || obj.consumed) return;
+    obj.consumed = true;
+    obj.mesh.visible = false;
+    if (!this.collectedWeaponIds.includes(weapon.id)) {
+      this.collectedWeaponIds.push(weapon.id);
+    }
+    this.equippedChestWeaponId = weapon.id;
+    this.chestWeaponBonus = weapon.powerBonus;
+    this.activeWeaponName = `${weapon.name} (+${weapon.powerBonus})`;
+    this.player.setWeaponAccent(weapon.accentHex);
+    this.recomputeStats();
+    this.audio.playAnvilForge();
+    this.combat.spawnBurst(obj.position.clone(), weapon.accentHex, 26);
+    this.showToast(
+      `Collected & Equipped: ${weapon.name}`,
+      `${weapon.rarity} Weapon (+${weapon.powerBonus} ATK) — Ready for battle!`,
+      'gold'
+    );
+    this.grantXp(50);
+    this.saveProgress();
+    this.emitHud();
+  }
+
   private showToast(title: string, subtitle: string, tone: 'gold' | 'crimson' | 'spirit'): void {
     this.toastCounter += 1;
     this.toast = { id: this.toastCounter, title, subtitle, tone };
@@ -1267,7 +1427,13 @@ export class KalyugGameEngine {
       this.elapsedTime += dt;
 
       this.step(dt);
-      this.renderer.render(this.scene, this.camCtrl.camera);
+
+      const isActiveScene =
+        this.screen === 'playing' || this.screen === 'menu' || this.screen === 'class_select';
+      if (isActiveScene || this.needsStaticRender) {
+        this.needsStaticRender = false;
+        this.renderer.render(this.scene, this.camCtrl.camera);
+      }
 
       if (this.isSoftwareGl) {
         this.afterDraw(tick);
@@ -1284,20 +1450,28 @@ export class KalyugGameEngine {
   }
 
   private afterDraw(cb: () => void): void {
+    const isActiveScene =
+      this.screen === 'playing' || this.screen === 'menu' || this.screen === 'class_select';
+    if (!isActiveScene) {
+      this.frameId = window.setTimeout(cb, 100);
+      return;
+    }
     const gl = this.renderer.getContext() as WebGL2RenderingContext;
     const sync = gl.fenceSync ? gl.fenceSync(gl.SYNC_GPU_COMMANDS_COMPLETE, 0) : null;
     gl.flush();
+    let polls = 0;
     const poll = () => {
       if (this.disposed) {
         if (sync) gl.deleteSync(sync);
         return;
       }
+      polls += 1;
       const state = sync && gl.getSyncParameter(sync, gl.SYNC_STATUS);
-      if (sync && state === gl.UNSIGNALED) {
+      if (sync && state === gl.UNSIGNALED && polls < 8) {
         this.frameId = window.setTimeout(poll, 5);
       } else {
         if (sync) gl.deleteSync(sync);
-        this.frameId = window.setTimeout(cb, 80);
+        this.frameId = window.setTimeout(cb, 45);
       }
     };
     this.frameId = window.setTimeout(poll, 5);
@@ -1352,7 +1526,17 @@ export class KalyugGameEngine {
       if (sys.saintPuja) this.performSaintPuja();
     }
 
-    if (this.currentArea) {
+    if (this.saveQueued) {
+      this.saveFlushTimer -= dt;
+      if (this.saveFlushTimer <= 0) {
+        this.saveProgress();
+      }
+    }
+
+    if (
+      this.currentArea &&
+      (this.screen === 'playing' || this.screen === 'menu' || this.screen === 'class_select')
+    ) {
       this.currentArea.update(dt, this.elapsedTime, this.stats.ancientVisionRank);
     }
 
@@ -1617,6 +1801,10 @@ export class KalyugGameEngine {
     for (const it of this.currentArea.interactives) {
       if (it.consumed && it.kind !== 'bell' && it.kind !== 'lore' && it.kind !== 'trial_shrine') continue;
       const d = this.player.position.distanceTo(it.position);
+      if (it.kind === 'weapon_drop' && d <= 1.55) {
+        this.collectDroppedWeapon(it);
+        continue;
+      }
       if (d <= it.radius && d < closestDist) {
         closest = it;
         closestDist = d;
@@ -1713,7 +1901,7 @@ export class KalyugGameEngine {
       loreModal: this.loreModal,
       detectedEnemyCount: this.detectedEnemyCount,
       pointerLocked: this.input.pointerLocked,
-      hasSave: hasSavedGame(),
+      hasSave: this.hasSaveCached,
       enemiesDefeated: this.enemiesDefeated,
       mandalaRings: [...this.mandalaRings] as [number, number, number],
       discoveredAreas: [...this.flags.discoveredAreas],
@@ -1721,6 +1909,9 @@ export class KalyugGameEngine {
       forgeShards: this.forgeShards,
       forgedWeaponBonus: this.forgedWeaponBonus,
       forgedWeaponsCount: this.forgedWeaponsCount,
+      collectedWeaponIds: [...this.collectedWeaponIds],
+      equippedChestWeaponId: this.equippedChestWeaponId,
+      chestWeaponBonus: this.chestWeaponBonus,
       classSpecialCooldown: Number(this.classSpecialCooldown.toFixed(1)),
       yaggaActive: this.combat.hasActiveYagga(),
       map: {
@@ -1758,7 +1949,7 @@ export class KalyugGameEngine {
     this.renderer.domElement.removeEventListener('webglcontextlost', this.handleContextLost);
     this.detachInputs?.();
 
-    this.combat.clear();
+    this.combat.dispose();
     for (const e of this.enemies) e.dispose(this.scene);
     this.pet.dispose();
     this.currentArea?.dispose();

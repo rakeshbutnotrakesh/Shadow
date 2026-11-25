@@ -24,8 +24,11 @@ interface Shockwave {
 }
 
 interface ParticleBurst {
+  active: boolean;
   points: THREE.Points;
+  posAttr: THREE.BufferAttribute;
   velocities: Float32Array;
+  count: number;
   life: number;
   maxLife: number;
 }
@@ -41,30 +44,212 @@ interface YaggaKund {
 }
 
 const _tmpVec = new THREE.Vector3();
+const _yAxis = new THREE.Vector3(0, 1, 0);
+const MAX_BURST_POOL = 14;
+const MAX_BURST_PARTICLES = 24;
+const MAX_SHOCKWAVES = 10;
 
-function disposeObject3D(obj: THREE.Object3D): void {
-  obj.traverse((child) => {
-    if ((child as THREE.Mesh).isMesh) {
-      const m = child as THREE.Mesh;
-      m.geometry.dispose();
-      if (Array.isArray(m.material)) {
-        m.material.forEach((mt) => mt.dispose());
-      } else {
-        m.material.dispose();
-      }
-    }
-  });
+// Shared geometries & materials to prevent WebGL shader compilation and GPU buffer churn on hits/kills
+const SHARED_GEOS = {
+  arrowShaft: new THREE.CylinderGeometry(0.022, 0.022, 0.95, 6),
+  arrowTip: new THREE.ConeGeometry(0.055, 0.22, 6),
+  arrowFletch: new THREE.BoxGeometry(0.14, 0.02, 0.18),
+  pierceShaft: new THREE.CylinderGeometry(0.036, 0.036, 1.3, 6),
+  pierceTip: new THREE.ConeGeometry(0.085, 0.3, 6),
+  ringGround: new THREE.RingGeometry(0.55, 0.95, 24),
+  ringBoss: new THREE.RingGeometry(0.8, 1.35, 32),
+  sacredWave: new THREE.TorusGeometry(0.52, 0.11, 8, 20),
+  enemyOrb: new THREE.OctahedronGeometry(0.28, 1),
+  yaggaBase: new THREE.CylinderGeometry(0.95, 1.15, 0.26, 4),
+  yaggaRing: new THREE.RingGeometry(5.3, 5.7, 32),
+  yaggaFlameMain: new THREE.ConeGeometry(0.32, 1.05, 6),
+  yaggaFlameSide: new THREE.ConeGeometry(0.18, 0.65, 6),
+};
+
+const SHARED_MATS = {
+  arrowShaft: new THREE.MeshStandardMaterial({
+    color: 0xfde68a,
+    emissive: 0xd97706,
+    emissiveIntensity: 0.9,
+    roughness: 0.3,
+  }),
+  arrowTip: new THREE.MeshStandardMaterial({
+    color: 0xffffff,
+    emissive: 0xfbbf24,
+    emissiveIntensity: 2.0,
+    metalness: 0.9,
+    roughness: 0.15,
+  }),
+  arrowFletch: new THREE.MeshStandardMaterial({
+    color: 0x22c55e,
+    emissive: 0x16a34a,
+    emissiveIntensity: 1.2,
+  }),
+  pierceShaft: new THREE.MeshStandardMaterial({
+    color: 0xfef08a,
+    emissive: 0xf59e0b,
+    emissiveIntensity: 1.8,
+    roughness: 0.2,
+  }),
+  pierceTip: new THREE.MeshStandardMaterial({
+    color: 0xffffff,
+    emissive: 0xfde047,
+    emissiveIntensity: 2.8,
+    metalness: 0.9,
+    roughness: 0.1,
+  }),
+  sacredWave: new THREE.MeshStandardMaterial({
+    color: 0xfde047,
+    emissive: 0xf59e0b,
+    emissiveIntensity: 2.4,
+    roughness: 0.2,
+  }),
+  yaggaBase: new THREE.MeshStandardMaterial({
+    color: 0x8b6b46,
+    roughness: 0.78,
+    metalness: 0.1,
+  }),
+  yaggaRing: new THREE.MeshBasicMaterial({
+    color: 0xf97316,
+    side: THREE.DoubleSide,
+    transparent: true,
+    opacity: 0.7,
+    depthWrite: false,
+  }),
+  yaggaFlame: new THREE.MeshStandardMaterial({
+    color: 0xfde047,
+    emissive: 0xf97316,
+    emissiveIntensity: 2.5,
+    transparent: true,
+    opacity: 0.9,
+  }),
+};
+
+const orbMaterialCache = new Map<number, THREE.MeshStandardMaterial>();
+function getOrbMaterial(color: number): THREE.MeshStandardMaterial {
+  let mat = orbMaterialCache.get(color);
+  if (!mat) {
+    mat = new THREE.MeshStandardMaterial({
+      color,
+      emissive: color,
+      emissiveIntensity: 2.2,
+    });
+    orbMaterialCache.set(color, mat);
+  }
+  return mat;
 }
 
 export class CombatSystem {
   private scene: THREE.Scene;
   private projectiles: Projectile[] = [];
   private shockwaves: Shockwave[] = [];
-  private bursts: ParticleBurst[] = [];
+  private burstPool: ParticleBurst[] = [];
+  private burstCursor = 0;
   private yaggas: YaggaKund[] = [];
+  private warmupGroup: THREE.Group | null = null;
 
   constructor(scene: THREE.Scene) {
     this.scene = scene;
+    this.initBurstPool();
+  }
+
+  private initBurstPool(): void {
+    for (let i = 0; i < MAX_BURST_POOL; i++) {
+      const positions = new Float32Array(MAX_BURST_PARTICLES * 3);
+      const velocities = new Float32Array(MAX_BURST_PARTICLES * 3);
+      const geom = new THREE.BufferGeometry();
+      const posAttr = new THREE.BufferAttribute(positions, 3);
+      posAttr.setUsage(THREE.DynamicDrawUsage);
+      geom.setAttribute('position', posAttr);
+      geom.setDrawRange(0, 0);
+
+      const mat = new THREE.PointsMaterial({
+        color: 0xfbbf24,
+        size: 0.22,
+        transparent: true,
+        opacity: 1,
+        depthWrite: false,
+      });
+      const points = new THREE.Points(geom, mat);
+      points.visible = false;
+      points.frustumCulled = false;
+      this.scene.add(points);
+
+      this.burstPool.push({
+        active: false,
+        points,
+        posAttr,
+        velocities,
+        count: 0,
+        life: 0,
+        maxLife: 0.55,
+      });
+    }
+  }
+
+  /**
+   * Adds temporary off-camera meshes using shared materials before initial renderer.compile()
+   * so mid-combat hits and kills trigger zero WebGL shader compilation stalls.
+   */
+  public prepareWarmUp(): void {
+    if (this.warmupGroup) return;
+    const g = new THREE.Group();
+    g.position.set(0, -100, 0);
+
+    const m1 = new THREE.Mesh(SHARED_GEOS.arrowShaft, SHARED_MATS.arrowShaft);
+    const m2 = new THREE.Mesh(SHARED_GEOS.arrowTip, SHARED_MATS.arrowTip);
+    const m3 = new THREE.Mesh(SHARED_GEOS.arrowFletch, SHARED_MATS.arrowFletch);
+    const m4 = new THREE.Mesh(SHARED_GEOS.sacredWave, SHARED_MATS.sacredWave);
+    const m5 = new THREE.Mesh(SHARED_GEOS.enemyOrb, getOrbMaterial(0xef4444));
+    const m6 = new THREE.Mesh(
+      SHARED_GEOS.ringGround,
+      new THREE.MeshBasicMaterial({
+        color: 0xffffff,
+        side: THREE.DoubleSide,
+        transparent: true,
+        opacity: 0.5,
+        depthWrite: false,
+      })
+    );
+    const m7 = new THREE.Mesh(SHARED_GEOS.yaggaBase, SHARED_MATS.yaggaBase);
+    const m8 = new THREE.Mesh(SHARED_GEOS.yaggaFlameMain, SHARED_MATS.yaggaFlame);
+    g.add(m1, m2, m3, m4, m5, m6, m7, m8);
+
+    // Briefly unhide one pooled burst for shader compile
+    if (this.burstPool[0]) {
+      this.burstPool[0].points.visible = true;
+      this.burstPool[0].points.geometry.setDrawRange(0, 1);
+    }
+
+    this.scene.add(g);
+    this.warmupGroup = g;
+  }
+
+  public finishWarmUp(): void {
+    if (this.warmupGroup) {
+      this.scene.remove(this.warmupGroup);
+      this.warmupGroup.traverse((c) => {
+        if ((c as THREE.Mesh).isMesh) {
+          const mat = (c as THREE.Mesh).material;
+          if (
+            mat !== SHARED_MATS.arrowShaft &&
+            mat !== SHARED_MATS.arrowTip &&
+            mat !== SHARED_MATS.arrowFletch &&
+            mat !== SHARED_MATS.sacredWave &&
+            mat !== SHARED_MATS.yaggaBase &&
+            mat !== SHARED_MATS.yaggaFlame &&
+            mat !== getOrbMaterial(0xef4444)
+          ) {
+            (mat as THREE.Material).dispose();
+          }
+        }
+      });
+      this.warmupGroup = null;
+    }
+    if (this.burstPool[0] && !this.burstPool[0].active) {
+      this.burstPool[0].points.visible = false;
+      this.burstPool[0].points.geometry.setDrawRange(0, 0);
+    }
   }
 
   public performPlayerMelee(
@@ -80,6 +265,7 @@ export class CombatSystem {
     burstColor = 0xef4444
   ): void {
     let hitAny = false;
+    let killedAny = false;
 
     for (const enemy of enemies) {
       if (!enemy.alive || enemy.dying) continue;
@@ -88,68 +274,61 @@ export class CombatSystem {
       const dist = _tmpVec.length();
       if (dist > reach + enemy.radius) continue;
 
-      const dir = _tmpVec.clone().normalize();
+      const dir = dist > 0.001 ? _tmpVec.clone().normalize() : new THREE.Vector3(0, 0, 1);
       const dot = dir.dot(playerForward);
       if (dot < -0.15 && dist > 1.2) continue;
 
       hitAny = true;
       const killed = enemy.takeDamage(damage, dir, knockback);
       this.spawnBurst(
-        new THREE.Vector3(enemy.position.x, enemy.position.y + 1.2, enemy.position.z),
+        _tmpVec.set(enemy.position.x, enemy.position.y + 1.2, enemy.position.z),
         killed ? 0xfbbf24 : burstColor,
-        killed ? 20 : 12
+        killed ? 18 : 10
       );
       if (killed) {
-        audio.playEnemyDeath();
+        killedAny = true;
         onEnemyKilled(enemy);
       }
     }
 
+    if (killedAny) {
+      audio.playEnemyDeath();
+    }
     if (hitAny) {
       audio.playHit(knockback >= 9);
       onHitFeedback();
     }
   }
 
+  private createArrowMesh(withFletch: boolean): THREE.Group {
+    const arrowGroup = new THREE.Group();
+    const shaft = new THREE.Mesh(SHARED_GEOS.arrowShaft, SHARED_MATS.arrowShaft);
+    shaft.rotation.x = Math.PI / 2;
+    const tip = new THREE.Mesh(SHARED_GEOS.arrowTip, SHARED_MATS.arrowTip);
+    tip.rotation.x = Math.PI / 2;
+    tip.position.z = 0.56;
+    if (withFletch) {
+      const fletch = new THREE.Mesh(SHARED_GEOS.arrowFletch, SHARED_MATS.arrowFletch);
+      fletch.position.z = -0.4;
+      arrowGroup.add(shaft, tip, fletch);
+    } else {
+      arrowGroup.add(shaft, tip);
+    }
+    return arrowGroup;
+  }
+
   public spawnPlayerArrow(
     origin: THREE.Vector3,
     direction: THREE.Vector3,
     damage: number,
-    audio: AudioEngine
+    audio: AudioEngine,
+    playSfx = true
   ): void {
-    audio.playBowRelease();
+    if (playSfx) audio.playBowRelease();
 
-    const arrowGroup = new THREE.Group();
-    const shaftMat = new THREE.MeshStandardMaterial({
-      color: 0xfde68a,
-      emissive: 0xd97706,
-      emissiveIntensity: 0.9,
-      roughness: 0.3,
-    });
-    const tipMat = new THREE.MeshStandardMaterial({
-      color: 0xffffff,
-      emissive: 0xfbbf24,
-      emissiveIntensity: 2.0,
-      metalness: 0.9,
-      roughness: 0.15,
-    });
-    const fletchMat = new THREE.MeshStandardMaterial({
-      color: 0x22c55e,
-      emissive: 0x16a34a,
-      emissiveIntensity: 1.2,
-    });
-
-    const shaft = new THREE.Mesh(new THREE.CylinderGeometry(0.022, 0.022, 0.95, 6), shaftMat);
-    shaft.rotation.x = Math.PI / 2;
-    const tip = new THREE.Mesh(new THREE.ConeGeometry(0.055, 0.22, 6), tipMat);
-    tip.rotation.x = Math.PI / 2;
-    tip.position.z = 0.56;
-    const fletch = new THREE.Mesh(new THREE.BoxGeometry(0.14, 0.02, 0.18), fletchMat);
-    fletch.position.z = -0.4;
-
-    arrowGroup.add(shaft, tip, fletch);
+    const arrowGroup = this.createArrowMesh(true);
     const flatDir = direction.clone().setY(0).normalize();
-    arrowGroup.position.copy(origin).add(new THREE.Vector3(0, 1.32, 0)).addScaledVector(flatDir, 0.7);
+    arrowGroup.position.set(origin.x, origin.y + 1.32, origin.z).addScaledVector(flatDir, 0.7);
     arrowGroup.rotation.y = Math.atan2(flatDir.x, flatDir.z);
     this.scene.add(arrowGroup);
 
@@ -172,28 +351,15 @@ export class CombatSystem {
   ): void {
     audio.playBowRelease();
     const arrowGroup = new THREE.Group();
-    const shaftMat = new THREE.MeshStandardMaterial({
-      color: 0xfef08a,
-      emissive: 0xf59e0b,
-      emissiveIntensity: 1.8,
-      roughness: 0.2,
-    });
-    const tipMat = new THREE.MeshStandardMaterial({
-      color: 0xffffff,
-      emissive: 0xfde047,
-      emissiveIntensity: 2.8,
-      metalness: 0.9,
-      roughness: 0.1,
-    });
-    const shaft = new THREE.Mesh(new THREE.CylinderGeometry(0.036, 0.036, 1.3, 6), shaftMat);
+    const shaft = new THREE.Mesh(SHARED_GEOS.pierceShaft, SHARED_MATS.pierceShaft);
     shaft.rotation.x = Math.PI / 2;
-    const tip = new THREE.Mesh(new THREE.ConeGeometry(0.085, 0.3, 6), tipMat);
+    const tip = new THREE.Mesh(SHARED_GEOS.pierceTip, SHARED_MATS.pierceTip);
     tip.rotation.x = Math.PI / 2;
     tip.position.z = 0.72;
     arrowGroup.add(shaft, tip);
 
     const flatDir = direction.clone().setY(0).normalize();
-    arrowGroup.position.copy(origin).add(new THREE.Vector3(0, 1.32, 0)).addScaledVector(flatDir, 0.75);
+    arrowGroup.position.set(origin.x, origin.y + 1.32, origin.z).addScaledVector(flatDir, 0.75);
     arrowGroup.rotation.y = Math.atan2(flatDir.x, flatDir.z);
     this.scene.add(arrowGroup);
 
@@ -218,46 +384,13 @@ export class CombatSystem {
     const flatBase = direction.clone().setY(0).normalize();
     const angles = [-0.18, 0, 0.18];
     angles.forEach((ang, idx) => {
-      const dir = flatBase.clone().applyAxisAngle(new THREE.Vector3(0, 1, 0), ang);
-      if (idx === 0) {
-        this.spawnPlayerArrow(origin, dir, damage, audio);
-      } else {
-        const arrowGroup = new THREE.Group();
-        const shaftMat = new THREE.MeshStandardMaterial({
-          color: 0xfde68a,
-          emissive: 0xd97706,
-          emissiveIntensity: 0.9,
-        });
-        const tipMat = new THREE.MeshStandardMaterial({
-          color: 0xffffff,
-          emissive: 0xfbbf24,
-          emissiveIntensity: 2.0,
-        });
-        const shaft = new THREE.Mesh(new THREE.CylinderGeometry(0.022, 0.022, 0.95, 6), shaftMat);
-        shaft.rotation.x = Math.PI / 2;
-        const tip = new THREE.Mesh(new THREE.ConeGeometry(0.055, 0.22, 6), tipMat);
-        tip.rotation.x = Math.PI / 2;
-        tip.position.z = 0.56;
-        arrowGroup.add(shaft, tip);
-        arrowGroup.position.copy(origin).add(new THREE.Vector3(0, 1.32, 0)).addScaledVector(dir, 0.7);
-        arrowGroup.rotation.y = Math.atan2(dir.x, dir.z);
-        this.scene.add(arrowGroup);
-
-        this.projectiles.push({
-          mesh: arrowGroup,
-          vel: dir.multiplyScalar(30),
-          damage,
-          life: 1.4,
-          fromPlayer: true,
-          isArrow: true,
-          hitIds: new Set(),
-        });
-      }
+      const dir = flatBase.clone().applyAxisAngle(_yAxis, ang);
+      this.spawnPlayerArrow(origin, dir, damage, audio, idx === 0);
     });
   }
 
   public spawnGroundRingEffect(origin: THREE.Vector3, maxRadius: number, color: number): void {
-    const geom = new THREE.RingGeometry(0.55, 0.95, 28);
+    if (this.shockwaves.length >= MAX_SHOCKWAVES) return;
     const mat = new THREE.MeshBasicMaterial({
       color,
       side: THREE.DoubleSide,
@@ -265,7 +398,7 @@ export class CombatSystem {
       opacity: 0.85,
       depthWrite: false,
     });
-    const mesh = new THREE.Mesh(geom, mat);
+    const mesh = new THREE.Mesh(SHARED_GEOS.ringGround, mat);
     mesh.rotation.x = -Math.PI / 2;
     mesh.position.set(origin.x, origin.y + 0.14, origin.z);
     this.scene.add(mesh);
@@ -290,42 +423,8 @@ export class CombatSystem {
     const flatBase = direction.clone().setY(0).normalize();
     const angles = [-0.28, -0.14, 0, 0.14, 0.28];
     angles.forEach((ang, idx) => {
-      const dir = flatBase.clone().applyAxisAngle(new THREE.Vector3(0, 1, 0), ang);
-      if (idx === 0) {
-        this.spawnPlayerArrow(origin, dir, damage, audio);
-      } else {
-        // Reuse silent spawn without stacking 5 bow audio cues at once
-        const arrowGroup = new THREE.Group();
-        const shaftMat = new THREE.MeshStandardMaterial({
-          color: 0xfde68a,
-          emissive: 0xd97706,
-          emissiveIntensity: 0.9,
-        });
-        const tipMat = new THREE.MeshStandardMaterial({
-          color: 0xffffff,
-          emissive: 0xfbbf24,
-          emissiveIntensity: 2.0,
-        });
-        const shaft = new THREE.Mesh(new THREE.CylinderGeometry(0.022, 0.022, 0.95, 6), shaftMat);
-        shaft.rotation.x = Math.PI / 2;
-        const tip = new THREE.Mesh(new THREE.ConeGeometry(0.055, 0.22, 6), tipMat);
-        tip.rotation.x = Math.PI / 2;
-        tip.position.z = 0.56;
-        arrowGroup.add(shaft, tip);
-        arrowGroup.position.copy(origin).add(new THREE.Vector3(0, 1.32, 0)).addScaledVector(dir, 0.7);
-        arrowGroup.rotation.y = Math.atan2(dir.x, dir.z);
-        this.scene.add(arrowGroup);
-
-        this.projectiles.push({
-          mesh: arrowGroup,
-          vel: dir.multiplyScalar(30),
-          damage,
-          life: 1.4,
-          fromPlayer: true,
-          isArrow: true,
-          hitIds: new Set(),
-        });
-      }
+      const dir = flatBase.clone().applyAxisAngle(_yAxis, ang);
+      this.spawnPlayerArrow(origin, dir, damage, audio, idx === 0);
     });
   }
 
@@ -340,6 +439,7 @@ export class CombatSystem {
     onEnemyKilled: (enemy: EnemyEntity) => void
   ): number {
     let hits = 0;
+    let killedAny = false;
     for (const enemy of enemies) {
       if (!enemy.alive || enemy.dying) continue;
       _tmpVec.subVectors(enemy.position, center);
@@ -350,14 +450,17 @@ export class CombatSystem {
       const dir = dist > 0.01 ? _tmpVec.clone().normalize() : new THREE.Vector3(0, 0, 1);
       const killed = enemy.takeDamage(damage, dir, knockback);
       this.spawnBurst(
-        new THREE.Vector3(enemy.position.x, enemy.position.y + 1.1, enemy.position.z),
+        _tmpVec.set(enemy.position.x, enemy.position.y + 1.1, enemy.position.z),
         killed ? 0xfbbf24 : burstColor,
         killed ? 18 : 10
       );
       if (killed) {
-        audio.playEnemyDeath();
+        killedAny = true;
         onEnemyKilled(enemy);
       }
+    }
+    if (killedAny) {
+      audio.playEnemyDeath();
     }
     if (hits > 0) {
       audio.playHit(true);
@@ -369,43 +472,24 @@ export class CombatSystem {
     const group = new THREE.Group();
     group.position.set(origin.x, origin.y + 0.05, origin.z);
 
-    // Sacred sandstone Havan Kund altar
-    const kundMat = new THREE.MeshStandardMaterial({
-      color: 0x8b6b46,
-      roughness: 0.78,
-      metalness: 0.1,
-    });
-    const base = new THREE.Mesh(new THREE.CylinderGeometry(0.95, 1.15, 0.26, 4), kundMat);
+    const base = new THREE.Mesh(SHARED_GEOS.yaggaBase, SHARED_MATS.yaggaBase);
     base.rotation.y = Math.PI / 4;
     base.position.y = 0.13;
     group.add(base);
 
-    // Outer consecrated fire ring
-    const ringMat = new THREE.MeshBasicMaterial({
-      color: 0xf97316,
-      side: THREE.DoubleSide,
-      transparent: true,
-      opacity: 0.7,
-      depthWrite: false,
-    });
-    const ring = new THREE.Mesh(new THREE.RingGeometry(5.3, 5.7, 32), ringMat);
+    const ring = new THREE.Mesh(SHARED_GEOS.yaggaRing, SHARED_MATS.yaggaRing);
     ring.rotation.x = -Math.PI / 2;
     ring.position.y = 0.08;
     group.add(ring);
 
-    // Sacred Agni flames
     const flames: THREE.Mesh[] = [];
-    const flameMat = new THREE.MeshStandardMaterial({
-      color: 0xfde047,
-      emissive: 0xf97316,
-      emissiveIntensity: 2.5,
-      transparent: true,
-      opacity: 0.9,
-    });
     for (let i = 0; i < 5; i++) {
       const a = (i / 5) * Math.PI * 2;
       const r = i === 0 ? 0 : 0.36;
-      const cone = new THREE.Mesh(new THREE.ConeGeometry(i === 0 ? 0.32 : 0.18, i === 0 ? 1.05 : 0.65, 6), flameMat);
+      const cone = new THREE.Mesh(
+        i === 0 ? SHARED_GEOS.yaggaFlameMain : SHARED_GEOS.yaggaFlameSide,
+        SHARED_MATS.yaggaFlame
+      );
       cone.position.set(Math.cos(a) * r, i === 0 ? 0.65 : 0.48, Math.sin(a) * r);
       group.add(cone);
       flames.push(cone);
@@ -434,15 +518,8 @@ export class CombatSystem {
     audio: AudioEngine
   ): void {
     audio.playSacredWave();
-    const geom = new THREE.TorusGeometry(0.52, 0.11, 8, 20);
-    const mat = new THREE.MeshStandardMaterial({
-      color: 0xfde047,
-      emissive: 0xf59e0b,
-      emissiveIntensity: 2.4,
-      roughness: 0.2,
-    });
-    const mesh = new THREE.Mesh(geom, mat);
-    mesh.position.copy(origin).add(new THREE.Vector3(0, 1.15, 0));
+    const mesh = new THREE.Mesh(SHARED_GEOS.sacredWave, SHARED_MATS.sacredWave);
+    mesh.position.set(origin.x, origin.y + 1.15, origin.z);
     mesh.rotation.x = Math.PI / 2;
     this.scene.add(mesh);
 
@@ -463,13 +540,7 @@ export class CombatSystem {
     speed: number,
     color: number
   ): void {
-    const geom = new THREE.OctahedronGeometry(0.28, 1);
-    const mat = new THREE.MeshStandardMaterial({
-      color,
-      emissive: color,
-      emissiveIntensity: 2.2,
-    });
-    const mesh = new THREE.Mesh(geom, mat);
+    const mesh = new THREE.Mesh(SHARED_GEOS.enemyOrb, getOrbMaterial(color));
     mesh.position.copy(origin);
     this.scene.add(mesh);
 
@@ -484,7 +555,7 @@ export class CombatSystem {
   }
 
   public spawnBossShockwave(origin: THREE.Vector3, damage: number): void {
-    const geom = new THREE.RingGeometry(0.8, 1.35, 36);
+    if (this.shockwaves.length >= MAX_SHOCKWAVES) return;
     const mat = new THREE.MeshBasicMaterial({
       color: 0xef4444,
       side: THREE.DoubleSide,
@@ -492,7 +563,7 @@ export class CombatSystem {
       opacity: 0.85,
       depthWrite: false,
     });
-    const mesh = new THREE.Mesh(geom, mat);
+    const mesh = new THREE.Mesh(SHARED_GEOS.ringBoss, mat);
     mesh.rotation.x = -Math.PI / 2;
     mesh.position.set(origin.x, origin.y + 0.14, origin.z);
     this.scene.add(mesh);
@@ -508,39 +579,43 @@ export class CombatSystem {
     });
   }
 
-  public spawnBurst(pos: THREE.Vector3, color: number, count = 14): void {
-    const positions = new Float32Array(count * 3);
-    const velocities = new Float32Array(count * 3);
+  public spawnBurst(pos: THREE.Vector3, color: number, requestedCount = 14): void {
+    const count = Math.min(MAX_BURST_PARTICLES, Math.max(4, requestedCount));
+    let slot: ParticleBurst | undefined;
+    for (let i = 0; i < this.burstPool.length; i++) {
+      if (!this.burstPool[i].active) {
+        slot = this.burstPool[i];
+        break;
+      }
+    }
+    if (!slot) {
+      slot = this.burstPool[this.burstCursor % this.burstPool.length];
+      this.burstCursor += 1;
+    }
+
+    const posArr = slot.posAttr.array as Float32Array;
     for (let i = 0; i < count; i++) {
-      positions[i * 3] = pos.x;
-      positions[i * 3 + 1] = pos.y;
-      positions[i * 3 + 2] = pos.z;
+      posArr[i * 3] = pos.x;
+      posArr[i * 3 + 1] = pos.y;
+      posArr[i * 3 + 2] = pos.z;
 
       const angle = Math.random() * Math.PI * 2;
       const spd = 2 + Math.random() * 4.5;
-      velocities[i * 3] = Math.cos(angle) * spd;
-      velocities[i * 3 + 1] = 2 + Math.random() * 4;
-      velocities[i * 3 + 2] = Math.sin(angle) * spd;
+      slot.velocities[i * 3] = Math.cos(angle) * spd;
+      slot.velocities[i * 3 + 1] = 2 + Math.random() * 4;
+      slot.velocities[i * 3 + 2] = Math.sin(angle) * spd;
     }
 
-    const geom = new THREE.BufferGeometry();
-    geom.setAttribute('position', new THREE.BufferAttribute(positions, 3));
-    const mat = new THREE.PointsMaterial({
-      color,
-      size: 0.22,
-      transparent: true,
-      opacity: 1,
-      depthWrite: false,
-    });
-    const points = new THREE.Points(geom, mat);
-    this.scene.add(points);
-
-    this.bursts.push({
-      points,
-      velocities,
-      life: 0.55,
-      maxLife: 0.55,
-    });
+    slot.active = true;
+    slot.count = count;
+    slot.life = 0.55;
+    slot.maxLife = 0.55;
+    slot.posAttr.needsUpdate = true;
+    slot.points.geometry.setDrawRange(0, count);
+    const mat = slot.points.material as THREE.PointsMaterial;
+    mat.color.setHex(color);
+    mat.opacity = 1;
+    slot.points.visible = true;
   }
 
   public update(
@@ -576,7 +651,7 @@ export class CombatSystem {
             const dir = p.vel.clone().normalize();
             const killed = enemy.takeDamage(p.damage, dir, p.isArrow ? 4.5 : 7.5);
             audio.playHit(true);
-            this.spawnBurst(p.mesh.position.clone(), p.isArrow ? 0x22c55e : 0xfbbf24, 14);
+            this.spawnBurst(p.mesh.position, p.isArrow ? 0x22c55e : 0xfbbf24, 12);
             if (killed) {
               audio.playEnemyDeath();
               onEnemyKilled(enemy);
@@ -594,14 +669,13 @@ export class CombatSystem {
         const hitR = playerRadius + 0.4;
         if (dx * dx + dz * dz <= hitR * hitR && Math.abs(dy) < 1.35) {
           onPlayerDamaged(p.damage);
-          this.spawnBurst(p.mesh.position.clone(), 0xef4444, 10);
+          this.spawnBurst(p.mesh.position, 0xef4444, 10);
           remove = true;
         }
       }
 
       if (remove) {
         this.scene.remove(p.mesh);
-        disposeObject3D(p.mesh);
         this.projectiles.splice(i, 1);
       }
     }
@@ -625,44 +699,43 @@ export class CombatSystem {
 
       if (sw.radius >= sw.maxRadius) {
         this.scene.remove(sw.mesh);
-        sw.mesh.geometry.dispose();
         mat.dispose();
         this.shockwaves.splice(i, 1);
       }
     }
 
-    // Update particle bursts
-    for (let i = this.bursts.length - 1; i >= 0; i--) {
-      const b = this.bursts[i];
+    // Update pooled particle bursts
+    for (let i = 0; i < this.burstPool.length; i++) {
+      const b = this.burstPool[i];
+      if (!b.active) continue;
       b.life -= dt;
-      const posAttr = b.points.geometry.getAttribute('position') as THREE.BufferAttribute;
-      for (let j = 0; j < posAttr.count; j++) {
-        b.velocities[j * 3 + 1] -= 9.8 * dt;
-        posAttr.setXYZ(
-          j,
-          posAttr.getX(j) + b.velocities[j * 3] * dt,
-          posAttr.getY(j) + b.velocities[j * 3 + 1] * dt,
-          posAttr.getZ(j) + b.velocities[j * 3 + 2] * dt
-        );
-      }
-      posAttr.needsUpdate = true;
-      (b.points.material as THREE.PointsMaterial).opacity = Math.max(0, b.life / b.maxLife);
-
       if (b.life <= 0) {
-        this.scene.remove(b.points);
-        b.points.geometry.dispose();
-        (b.points.material as THREE.Material).dispose();
-        this.bursts.splice(i, 1);
+        b.active = false;
+        b.points.visible = false;
+        b.points.geometry.setDrawRange(0, 0);
+        continue;
       }
+
+      const posArr = b.posAttr.array as Float32Array;
+      for (let j = 0; j < b.count; j++) {
+        const idx = j * 3;
+        b.velocities[idx + 1] -= 9.8 * dt;
+        posArr[idx] += b.velocities[idx] * dt;
+        posArr[idx + 1] += b.velocities[idx + 1] * dt;
+        posArr[idx + 2] += b.velocities[idx + 2] * dt;
+      }
+      b.posAttr.needsUpdate = true;
+      (b.points.material as THREE.PointsMaterial).opacity = Math.max(0, b.life / b.maxLife);
     }
 
     // Update Saint's active 3D Yagga Havan Kunds
+    const timeFactor = performance.now() * 0.012;
     for (let i = this.yaggas.length - 1; i >= 0; i--) {
       const y = this.yaggas[i];
       y.life -= dt;
       y.pulseAccum -= dt;
       y.flames.forEach((fl, idx) => {
-        fl.scale.y = 0.85 + Math.sin(performance.now() * 0.012 + idx * 1.4) * 0.25;
+        fl.scale.y = 0.85 + Math.sin(timeFactor + idx * 1.4) * 0.25;
         fl.rotation.y += dt * 2.5;
       });
       if (y.pulseAccum <= 0) {
@@ -680,7 +753,6 @@ export class CombatSystem {
       }
       if (y.life <= 0) {
         this.scene.remove(y.group);
-        disposeObject3D(y.group);
         this.yaggas.splice(i, 1);
       }
     }
@@ -689,25 +761,32 @@ export class CombatSystem {
   public clear(): void {
     for (const p of this.projectiles) {
       this.scene.remove(p.mesh);
-      disposeObject3D(p.mesh);
     }
     this.projectiles = [];
     for (const sw of this.shockwaves) {
       this.scene.remove(sw.mesh);
-      sw.mesh.geometry.dispose();
       (sw.mesh.material as THREE.Material).dispose();
     }
     this.shockwaves = [];
-    for (const b of this.bursts) {
+    for (const b of this.burstPool) {
+      b.active = false;
+      b.points.visible = false;
+      b.points.geometry.setDrawRange(0, 0);
+    }
+    for (const y of this.yaggas) {
+      this.scene.remove(y.group);
+    }
+    this.yaggas = [];
+  }
+
+  public dispose(): void {
+    this.clear();
+    this.finishWarmUp();
+    for (const b of this.burstPool) {
       this.scene.remove(b.points);
       b.points.geometry.dispose();
       (b.points.material as THREE.Material).dispose();
     }
-    this.bursts = [];
-    for (const y of this.yaggas) {
-      this.scene.remove(y.group);
-      disposeObject3D(y.group);
-    }
-    this.yaggas = [];
+    this.burstPool = [];
   }
 }

@@ -325,6 +325,11 @@ export class PlayerController {
     this.rebuildClassWeapon(classId);
   }
 
+  public setWeaponAccent(accentHex: number): void {
+    this.swordBladeMat.emissive.setHex(accentHex);
+    this.swordBladeMat.color.setHex(accentHex);
+  }
+
   private rebuildClassWeapon(classId: ClassId): void {
     while (this.weaponMountGroup.children.length > 0) {
       const child = this.weaponMountGroup.children[0];

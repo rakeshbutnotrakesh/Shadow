@@ -8,6 +8,8 @@ import {
   InteractiveObject,
   WorldFlags,
 } from './types';
+import type { ChestWeaponDef } from './weapons';
+import { buildExtendedArea } from './worldExtra';
 
 export interface BuiltArea {
   areaId: AreaId;
@@ -21,6 +23,7 @@ export interface BuiltArea {
   interactives: InteractiveObject[];
   enemySpawns: EnemySpawnConfig[];
   groundHeightAt: (x: number, z: number) => number;
+  spawnWeaponDrop: (pos: THREE.Vector3, weapon: ChestWeaponDef) => InteractiveObject;
   update: (dt: number, time: number, ancientVisionRank: number) => void;
   dispose: () => void;
 }
@@ -51,7 +54,8 @@ export class WorldBuilder {
   public buildArea(
     areaId: AreaId,
     flags: WorldFlags,
-    collectedArtifacts: ArtifactId[]
+    collectedArtifacts: ArtifactId[],
+    enemiesDefeatedInAreaCount = 0
   ): BuiltArea {
     const root = new THREE.Group();
     this.scene.add(root);
@@ -521,7 +525,7 @@ export class WorldBuilder {
       const pts = new THREE.Points(geo, mat);
       root.add(pts);
       animatedCallbacks.push((dt, t) => {
-        pts.rotation.y += dt * 0.03;
+      pts.rotation.y += dt * 0.03;
         const attr = geo.getAttribute('position') as THREE.BufferAttribute;
         for (let i = 0; i < actualCount; i++) {
           const y = attr.getY(i) + Math.sin(t * 1.4 + i) * 0.004;
@@ -530,6 +534,130 @@ export class WorldBuilder {
         attr.needsUpdate = true;
       });
     };
+
+    const spawnWeaponDrop = (pos: THREE.Vector3, weapon: ChestWeaponDef): InteractiveObject => {
+      const dropGroup = new THREE.Group();
+      dropGroup.position.set(pos.x, pos.y + 0.9, pos.z);
+
+      const bladeMat = trackMat(
+        new THREE.MeshStandardMaterial({
+          color: weapon.accentHex,
+          emissive: weapon.accentHex,
+          emissiveIntensity: 1.5,
+          roughness: 0.2,
+          metalness: 0.85,
+        })
+      );
+      const blade = new THREE.Mesh(trackGeo(new THREE.BoxGeometry(0.11, 1.05, 0.045)), bladeMat);
+      blade.rotation.z = 0.22;
+      const hilt = new THREE.Mesh(trackGeo(new THREE.BoxGeometry(0.32, 0.07, 0.08)), bronzeMat);
+      hilt.position.y = -0.34;
+      hilt.rotation.z = 0.22;
+      const halo = new THREE.Mesh(
+        trackGeo(new THREE.TorusGeometry(0.48, 0.035, 8, 22)),
+        goldEmissiveMat
+      );
+      halo.rotation.x = Math.PI / 2;
+      halo.position.y = -0.45;
+      const light = new THREE.PointLight(weapon.accentHex, 2.4, 8, 1.5);
+      light.position.y = 0.1;
+
+      dropGroup.add(blade, hilt, halo, light);
+      root.add(dropGroup);
+
+      const beacon = createVisionBeacon(pos.x, pos.y, pos.z, weapon.accentHex);
+
+      const item: InteractiveObject = {
+        id: `drop_${weapon.id}_${Date.now()}_${Math.floor(Math.random() * 999)}`,
+        kind: 'weapon_drop',
+        label: `${weapon.name} (+${weapon.powerBonus})`,
+        promptText: `Collect ${weapon.rarity} Weapon: ${weapon.name} (+${weapon.powerBonus} ATK)`,
+        position: new THREE.Vector3(pos.x, pos.y + 0.8, pos.z),
+        radius: 3.1,
+        mesh: dropGroup,
+        beaconMesh: beacon,
+        weaponDrop: weapon,
+        consumed: false,
+      };
+      interactives.push(item);
+
+      const baseY = pos.y + 0.95;
+      animatedCallbacks.push((dt, t) => {
+        if (!item.consumed && dropGroup.visible) {
+          dropGroup.rotation.y += dt * 2.2;
+          dropGroup.position.y = baseY + Math.sin(t * 3.1) * 0.16;
+        }
+      });
+
+      return item;
+    };
+
+    const finalizeArea = (cfg: {
+      areaId: AreaId;
+      name: string;
+      subtitle: string;
+      isStoneGround: boolean;
+      boundsRadius: number;
+      defaultSpawn: THREE.Vector3;
+      defaultYaw: number;
+      groundHeightAt: (x: number, z: number) => number;
+    }): BuiltArea => ({
+      ...cfg,
+      colliders,
+      interactives,
+      enemySpawns,
+      spawnWeaponDrop,
+      update: (dt, t, visionRank) => {
+        animatedCallbacks.forEach((cb) => cb(dt, t));
+        flickeringLights.forEach((f) => {
+          f.light.intensity = f.base + Math.sin(t * 7.8 + f.seed) * 0.42;
+        });
+        interactives.forEach((it) => {
+          if (it.beaconMesh) {
+            it.beaconMesh.visible =
+              !it.consumed && (it.kind === 'weapon_drop' || visionRank > 0);
+          }
+        });
+      },
+      dispose: () => {
+        this.scene.remove(root);
+        disposables.forEach((d) => d.dispose());
+      },
+    });
+
+    const extendedBuilt = buildExtendedArea(areaId, {
+      scene: this.scene,
+      root,
+      textures: this.textures,
+      shadowsEnabled: this.shadowsEnabled,
+      lowSpec: this.lowSpec,
+      flags,
+      enemiesDefeatedInAreaCount,
+      colliders,
+      interactives,
+      enemySpawns,
+      animatedCallbacks,
+      flickeringLights,
+      sandstoneMat,
+      darkStoneMat,
+      bronzeMat,
+      goldEmissiveMat,
+      trackGeo,
+      trackMat,
+      addBoxCollider,
+      addCylCollider,
+      createPillar,
+      createBrazier,
+      createPortalGate,
+      createRelicChest,
+      createLoreTablet,
+      createTrialShrine,
+      createAmbientParticles,
+      finalizeArea,
+    });
+    if (extendedBuilt) {
+      return extendedBuilt;
+    }
 
     // =========================================================================
     // AREA SPECIFIC BUILDERS
@@ -672,8 +800,9 @@ export class WorldBuilder {
       createPillar(-11, 0, -7, 4.2);
       createArtifactShrine('rudraksha', -14, 0, -4, 'Rudraksha', 0xd97706);
 
-      // Secret chest behind boulders, Lore Tablet & Tapasya Trial Altar
+      // Secret chests behind boulders & west grove, Lore Tablet & Tapasya Trial Altar
       createRelicChest('chest_forest_1', 17, 0, 10);
+      createRelicChest('chest_forest_2', -9, 0, 14);
       createTrialShrine('trial_forest', -6.5, 0, 15);
       createLoreTablet(
         'lore_forest',
@@ -707,7 +836,7 @@ export class WorldBuilder {
 
       createAmbientParticles(160, 34, 6, 0xa7f3d0, 0.18);
 
-      return {
+      return finalizeArea({
         areaId,
         name: 'Forgotten Forest',
         subtitle: 'Chapter I · Grove of Whispering Banyans',
@@ -715,24 +844,8 @@ export class WorldBuilder {
         boundsRadius: 35,
         defaultSpawn: new THREE.Vector3(0, 0, 26),
         defaultYaw: Math.PI,
-        colliders,
-        interactives,
-        enemySpawns,
         groundHeightAt: () => 0,
-        update: (dt, t, visionRank) => {
-          animatedCallbacks.forEach((cb) => cb(dt, t));
-          flickeringLights.forEach((f) => {
-            f.light.intensity = f.base + Math.sin(t * 7.5 + f.seed) * 0.45;
-          });
-          interactives.forEach((it) => {
-            if (it.beaconMesh) it.beaconMesh.visible = visionRank > 0 && !it.consumed;
-          });
-        },
-        dispose: () => {
-          this.scene.remove(root);
-          disposables.forEach((d) => d.dispose());
-        },
-      };
+      });
     }
 
     if (areaId === 'temple') {
@@ -943,7 +1056,7 @@ export class WorldBuilder {
         return 0;
       };
 
-      return {
+      return finalizeArea({
         areaId,
         name: 'Ancient Temple',
         subtitle: 'Chapter II · Mandapa of Echoing Bells',
@@ -951,24 +1064,8 @@ export class WorldBuilder {
         boundsRadius: 34,
         defaultSpawn: new THREE.Vector3(0, 0, 23),
         defaultYaw: Math.PI,
-        colliders,
-        interactives,
-        enemySpawns,
         groundHeightAt,
-        update: (dt, t, visionRank) => {
-          animatedCallbacks.forEach((cb) => cb(dt, t));
-          flickeringLights.forEach((f) => {
-            f.light.intensity = f.base + Math.sin(t * 7 + f.seed) * 0.4;
-          });
-          interactives.forEach((it) => {
-            if (it.beaconMesh) it.beaconMesh.visible = visionRank > 0 && !it.consumed;
-          });
-        },
-        dispose: () => {
-          this.scene.remove(root);
-          disposables.forEach((d) => d.dispose());
-        },
-      };
+      });
     }
 
     if (areaId === 'catacombs') {
@@ -1057,8 +1154,9 @@ export class WorldBuilder {
       // Ancient Yantra in West Crypt (-15.5, 0, 0)
       createArtifactShrine('ancient_yantra', -15.5, 0, 0, 'Ancient Yantra', 0x38bdf8);
 
-      // Secret Chest in East Crypt (15.5, 0, 0)
+      // Secret Chests in East Crypt & South Alcove
       createRelicChest('chest_catacombs_1', 15.5, 0, 0);
+      createRelicChest('chest_catacombs_2', 7.5, 0, 18);
 
       createLoreTablet(
         'lore_catacombs',
@@ -1066,21 +1164,21 @@ export class WorldBuilder {
         0,
         18,
         'Subterranean Seal',
-        'These tunnels sheltered the seekers who first mapped the Shadow Curse. Seek the Ancient Yantra in the western vault to pierce the darkness.'
+        'These tunnels sheltered the seekers who first mapped the Shadow Curse. Seek the Ancient Yantra in the western vault to unlock the Sunken Stepwell.'
       );
       createTrialShrine('trial_catacombs', -6, 0, 18);
 
-      // Exit Portal to Cursed Sanctum
+      // Exit Portal to Sunken Stepwell (Chapter IV)
       createPortalGate(
-        'portal_catacombs_sanctum',
+        'portal_catacombs_stepwell',
         0,
         0,
         -24,
-        'sanctum',
-        'Cursed Sanctum',
+        'sunken_stepwell',
+        'Sunken Stepwell',
         !collectedArtifacts.includes('ancient_yantra'),
         'Recover the Ancient Yantra in the West Crypt first',
-        0xf59e0b
+        0x38bdf8
       );
 
       enemySpawns.push(
@@ -1093,7 +1191,7 @@ export class WorldBuilder {
 
       createAmbientParticles(130, 22, 5, 0x7dd3fc, 0.14);
 
-      return {
+      return finalizeArea({
         areaId,
         name: 'Underground Catacombs',
         subtitle: 'Chapter III · Vaults Beneath the Roots',
@@ -1101,24 +1199,8 @@ export class WorldBuilder {
         boundsRadius: 30,
         defaultSpawn: new THREE.Vector3(0, 0, 24),
         defaultYaw: Math.PI,
-        colliders,
-        interactives,
-        enemySpawns,
         groundHeightAt: () => 0,
-        update: (dt, t, visionRank) => {
-          animatedCallbacks.forEach((cb) => cb(dt, t));
-          flickeringLights.forEach((f) => {
-            f.light.intensity = f.base + Math.sin(t * 8 + f.seed) * 0.35;
-          });
-          interactives.forEach((it) => {
-            if (it.beaconMesh) it.beaconMesh.visible = visionRank > 0 && !it.consumed;
-          });
-        },
-        dispose: () => {
-          this.scene.remove(root);
-          disposables.forEach((d) => d.dispose());
-        },
-      };
+      });
     }
 
     if (areaId === 'sanctum') {
@@ -1268,32 +1350,16 @@ export class WorldBuilder {
 
       createAmbientParticles(160, 28, 7, 0xfb7185, 0.17);
 
-      return {
+      return finalizeArea({
         areaId,
         name: 'Cursed Sanctum',
-        subtitle: 'Chapter IV · Bridges Above the Abyss',
+        subtitle: 'Chapter IX · Bridges Above the Abyss',
         isStoneGround: true,
         boundsRadius: 27,
         defaultSpawn: new THREE.Vector3(0, 0, 22),
         defaultYaw: Math.PI,
-        colliders,
-        interactives,
-        enemySpawns,
         groundHeightAt: () => 0,
-        update: (dt, t, visionRank) => {
-          animatedCallbacks.forEach((cb) => cb(dt, t));
-          flickeringLights.forEach((f) => {
-            f.light.intensity = f.base + Math.sin(t * 8 + f.seed) * 0.45;
-          });
-          interactives.forEach((it) => {
-            if (it.beaconMesh) it.beaconMesh.visible = visionRank > 0 && !it.consumed;
-          });
-        },
-        dispose: () => {
-          this.scene.remove(root);
-          disposables.forEach((d) => d.dispose());
-        },
-      };
+      });
     }
 
     // AREA 5: FINAL CHAMBER
@@ -1353,8 +1419,9 @@ export class WorldBuilder {
       eclipseMesh.rotation.z += dt * 0.25;
     });
 
-    // Divine Amulet Shrine at Entrance Threshold
+    // Divine Amulet Shrine & Final Weapon Chest at Entrance Threshold
     createArtifactShrine('divine_amulet', 0, 0, 12, 'Divine Amulet', 0xfbbf24);
+    createRelicChest('chest_final_1', 7, 0, 14);
     createTrialShrine('trial_final', -7, 0, 14);
 
     // Final Boss: Kali Purusha, Sovereign of Kalyug
@@ -1368,31 +1435,15 @@ export class WorldBuilder {
 
     createAmbientParticles(180, 26, 10, 0xfbbf24, 0.19);
 
-    return {
+    return finalizeArea({
       areaId: 'final_chamber',
       name: 'Final Chamber',
-      subtitle: 'Chapter V · Sanctum of the Eclipse',
+      subtitle: 'Chapter X · Sanctum of the Eclipse',
       isStoneGround: true,
       boundsRadius: 24,
       defaultSpawn: new THREE.Vector3(0, 0, 18),
       defaultYaw: Math.PI,
-      colliders,
-      interactives,
-      enemySpawns,
       groundHeightAt: () => 0,
-      update: (dt, t, visionRank) => {
-        animatedCallbacks.forEach((cb) => cb(dt, t));
-        flickeringLights.forEach((f) => {
-          f.light.intensity = f.base + Math.sin(t * 8.5 + f.seed) * 0.5;
-        });
-        interactives.forEach((it) => {
-          if (it.beaconMesh) it.beaconMesh.visible = visionRank > 0 && !it.consumed;
-        });
-      },
-      dispose: () => {
-        this.scene.remove(root);
-        disposables.forEach((d) => d.dispose());
-      },
-    };
+    });
   }
 }

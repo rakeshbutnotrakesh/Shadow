@@ -3,6 +3,8 @@ import { Compass, MapPin, X } from 'lucide-react';
 import { KalyugGameEngine } from '../game/main';
 import { AreaId, MapMarker, MapSnapshot } from '../game/types';
 
+import { AREA_NAMES } from '../game/weapons';
+
 interface MinimapProps {
   map: MapSnapshot;
   areaName: string;
@@ -18,16 +20,11 @@ interface FullMapModalProps {
   onClose: () => void;
 }
 
-const AREA_LABELS: Record<AreaId, string> = {
-  forest: 'Forgotten Forest',
-  temple: 'Ancient Temple',
-  catacombs: 'Underground Catacombs',
-  sanctum: 'Cursed Sanctum',
-  final_chamber: 'Final Chamber',
-};
+const AREA_LABELS: Record<AreaId, string> = AREA_NAMES;
 
 function getMarkerColor(m: MapMarker): string {
   if (m.kind === 'portal') return m.locked ? '#7a7267' : '#fbbf24';
+  if (m.kind === 'weapon_drop') return '#f472b6';
   if (m.kind === 'artifact') return '#38bdf8';
   if (m.kind === 'trial_shrine') return '#c084fc';
   if (m.kind === 'chest') return '#34d399';
@@ -280,7 +277,10 @@ export const FullRealmMapModal: React.FC<FullMapModalProps> = ({
                   <span className="inline-block h-2.5 w-2.5 rounded-full bg-[#f59e0b]" /> Altar / Bell / Monolith
                 </span>
                 <span className="flex items-center gap-1.5">
-                  <span className="inline-block h-2.5 w-2.5 rounded-full bg-[#34d399]" /> Relic Chest
+                  <span className="inline-block h-2.5 w-2.5 rounded-full bg-[#34d399]" /> Relic Chest (Box)
+                </span>
+                <span className="flex items-center gap-1.5">
+                  <span className="inline-block h-2.5 w-2.5 rounded-full bg-[#f472b6]" /> Dropped Weapon
                 </span>
               </div>
             </div>

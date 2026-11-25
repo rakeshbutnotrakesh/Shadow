@@ -27,6 +27,21 @@ export class AudioEngine {
   private unlockAttached = false;
   private detachUnlock: (() => void) | null = null;
   private onUnlockedCb: (() => void) | null = null;
+  private lastHitAt = 0;
+  private lastDeathAt = 0;
+  private lastGrowlAt = 0;
+  private lastFootstepAt = 0;
+
+  private cleanupAfterStop(osc: AudioScheduledSourceNode, ...nodes: AudioNode[]): void {
+    osc.onended = () => {
+      try {
+        osc.disconnect();
+        for (const n of nodes) n.disconnect();
+      } catch {
+        // Ignore already-disconnected nodes
+      }
+    };
+  }
 
   public setOnUnlocked(cb: () => void): void {
     this.onUnlockedCb = cb;
@@ -217,6 +232,41 @@ export class AudioEngine {
         this.windFilter.frequency.setTargetAtTime(170, now, 0.8);
         this.windGain.gain.setTargetAtTime(0.09, now, 0.8);
         break;
+      case 'sunken_stepwell':
+        this.droneOsc1.frequency.setTargetAtTime(69.3, now, 0.8);
+        this.droneOsc2.frequency.setTargetAtTime(103.8, now, 0.8);
+        this.droneFilter.frequency.setTargetAtTime(195, now, 0.8);
+        this.windFilter.frequency.setTargetAtTime(250, now, 0.8);
+        this.windGain.gain.setTargetAtTime(0.12, now, 0.8);
+        break;
+      case 'ashram_ruins':
+        this.droneOsc1.frequency.setTargetAtTime(77.8, now, 0.8);
+        this.droneOsc2.frequency.setTargetAtTime(116.5, now, 0.8);
+        this.droneFilter.frequency.setTargetAtTime(240, now, 0.8);
+        this.windFilter.frequency.setTargetAtTime(380, now, 0.8);
+        this.windGain.gain.setTargetAtTime(0.15, now, 0.8);
+        break;
+      case 'asura_fortress':
+        this.droneOsc1.frequency.setTargetAtTime(51.9, now, 0.8);
+        this.droneOsc2.frequency.setTargetAtTime(77.8, now, 0.8);
+        this.droneFilter.frequency.setTargetAtTime(290, now, 0.8);
+        this.windFilter.frequency.setTargetAtTime(480, now, 0.8);
+        this.windGain.gain.setTargetAtTime(0.17, now, 0.8);
+        break;
+      case 'astral_observatory':
+        this.droneOsc1.frequency.setTargetAtTime(82.4, now, 0.8);
+        this.droneOsc2.frequency.setTargetAtTime(123.5, now, 0.8);
+        this.droneFilter.frequency.setTargetAtTime(310, now, 0.8);
+        this.windFilter.frequency.setTargetAtTime(440, now, 0.8);
+        this.windGain.gain.setTargetAtTime(0.14, now, 0.8);
+        break;
+      case 'serpent_caverns':
+        this.droneOsc1.frequency.setTargetAtTime(58.2, now, 0.8);
+        this.droneOsc2.frequency.setTargetAtTime(87.3, now, 0.8);
+        this.droneFilter.frequency.setTargetAtTime(150, now, 0.8);
+        this.windFilter.frequency.setTargetAtTime(190, now, 0.8);
+        this.windGain.gain.setTargetAtTime(0.1, now, 0.8);
+        break;
       case 'sanctum':
         this.droneOsc1.frequency.setTargetAtTime(61.7, now, 0.8);
         this.droneOsc2.frequency.setTargetAtTime(92.5, now, 0.8);
@@ -235,7 +285,10 @@ export class AudioEngine {
   }
 
   public playFootstep(isStone: boolean, sprinting: boolean): void {
-    if (!this.ctx || !this.sfxGain) return;
+    if (!this.ctx || !this.sfxGain || this.ctx.state !== 'running') return;
+    const perfNow = performance.now();
+    if (perfNow - this.lastFootstepAt < 140) return;
+    this.lastFootstepAt = perfNow;
     const now = this.ctx.currentTime;
     const osc = this.ctx.createOscillator();
     const gain = this.ctx.createGain();
@@ -249,6 +302,7 @@ export class AudioEngine {
 
     osc.connect(gain);
     gain.connect(this.sfxGain);
+    this.cleanupAfterStop(osc, gain);
     osc.start(now);
     osc.stop(now + 0.1);
   }
@@ -307,7 +361,10 @@ export class AudioEngine {
   }
 
   public playHit(heavy = false): void {
-    if (!this.ctx || !this.sfxGain) return;
+    if (!this.ctx || !this.sfxGain || this.ctx.state !== 'running') return;
+    const perfNow = performance.now();
+    if (perfNow - this.lastHitAt < 45) return;
+    this.lastHitAt = perfNow;
     const now = this.ctx.currentTime;
     const osc = this.ctx.createOscillator();
     const gain = this.ctx.createGain();
@@ -320,6 +377,7 @@ export class AudioEngine {
 
     osc.connect(gain);
     gain.connect(this.sfxGain);
+    this.cleanupAfterStop(osc, gain);
     osc.start(now);
     osc.stop(now + 0.18);
   }
@@ -382,7 +440,10 @@ export class AudioEngine {
   }
 
   public playEnemyGrowl(type: EnemyType): void {
-    if (!this.ctx || !this.sfxGain) return;
+    if (!this.ctx || !this.sfxGain || this.ctx.state !== 'running') return;
+    const perfNow = performance.now();
+    if (perfNow - this.lastGrowlAt < 280) return;
+    this.lastGrowlAt = perfNow;
     const now = this.ctx.currentTime;
     const osc = this.ctx.createOscillator();
     const gain = this.ctx.createGain();
@@ -405,12 +466,16 @@ export class AudioEngine {
     osc.connect(filter);
     filter.connect(gain);
     gain.connect(this.sfxGain);
+    this.cleanupAfterStop(osc, filter, gain);
     osc.start(now);
     osc.stop(now + 0.36);
   }
 
   public playEnemyDeath(): void {
-    if (!this.ctx || !this.sfxGain) return;
+    if (!this.ctx || !this.sfxGain || this.ctx.state !== 'running') return;
+    const perfNow = performance.now();
+    if (perfNow - this.lastDeathAt < 70) return;
+    this.lastDeathAt = perfNow;
     const now = this.ctx.currentTime;
     const osc = this.ctx.createOscillator();
     const gain = this.ctx.createGain();
@@ -421,6 +486,7 @@ export class AudioEngine {
     gain.gain.exponentialRampToValueAtTime(0.001, now + 0.45);
     osc.connect(gain);
     gain.connect(this.sfxGain);
+    this.cleanupAfterStop(osc, gain);
     osc.start(now);
     osc.stop(now + 0.46);
   }
@@ -583,6 +649,11 @@ export class AudioEngine {
       forest: [196.0, 207.65, 246.94, 261.63, 293.66, 311.13, 392.0],
       temple: [220.0, 233.08, 277.18, 293.66, 329.63, 349.23, 440.0],
       catacombs: [164.81, 174.61, 207.65, 220.0, 246.94, 261.63, 329.63],
+      sunken_stepwell: [174.61, 196.0, 220.0, 261.63, 293.66, 349.23],
+      ashram_ruins: [220.0, 246.94, 293.66, 329.63, 392.0, 440.0],
+      asura_fortress: [146.83, 164.81, 185.0, 220.0, 246.94, 293.66],
+      astral_observatory: [246.94, 277.18, 329.63, 369.99, 440.0, 493.88],
+      serpent_caverns: [164.81, 185.0, 207.65, 246.94, 277.18, 329.63],
       sanctum: [185.0, 196.0, 233.08, 246.94, 277.18, 293.66, 369.99],
       final_chamber: [146.83, 155.56, 185.0, 220.0, 233.08, 277.18, 293.66],
     };
@@ -620,6 +691,7 @@ export class AudioEngine {
       overtone.connect(filter);
       filter.connect(gain);
       gain.connect(this.musicGain);
+      this.cleanupAfterStop(osc, overtone, filter, gain);
       osc.start(now);
       overtone.start(now);
       osc.stop(now + dur + 0.04);
@@ -642,6 +714,7 @@ export class AudioEngine {
         gain.gain.exponentialRampToValueAtTime(0.001, t0 + 1.4);
         osc.connect(gain);
         gain.connect(this.musicGain);
+        this.cleanupAfterStop(osc, gain);
         osc.start(t0);
         osc.stop(t0 + 1.45);
       });
@@ -659,6 +732,7 @@ export class AudioEngine {
       gain.gain.exponentialRampToValueAtTime(0.001, now + 0.16);
       osc.connect(gain);
       gain.connect(this.musicGain);
+      this.cleanupAfterStop(osc, gain);
       osc.start(now);
       osc.stop(now + 0.18);
     }
@@ -710,11 +784,17 @@ export class AudioEngine {
     });
   }
 
-  public playVedaMantraChant(swaraHz: number[]): void {
+  public playVedaMantraChant(swaraHz: number[], canRetry = true): void {
     this.init();
     if (!this.ctx || !this.sfxGain) return;
     if (this.ctx.state === 'suspended') {
-      void this.ctx.resume().then(() => this.playVedaMantraChant(swaraHz));
+      if (canRetry) {
+        void this.ctx.resume().then(() => {
+          if (this.ctx?.state === 'running') {
+            this.playVedaMantraChant(swaraHz, false);
+          }
+        });
+      }
       return;
     }
     const now = this.ctx.currentTime + 0.04;
@@ -738,6 +818,7 @@ export class AudioEngine {
       osc.connect(gain);
       sub.connect(gain);
       gain.connect(this.sfxGain);
+      this.cleanupAfterStop(osc, sub, gain);
       osc.start(t0);
       sub.start(t0);
       osc.stop(t0 + 0.4);

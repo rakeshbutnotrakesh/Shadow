@@ -49,9 +49,13 @@ export function createNewSaveData(): SaveData {
     },
     completedQuestIds: [],
     enemiesDefeated: 0,
+    enemiesDefeatedInArea: {},
     forgeShards: 2,
     forgedWeaponBonus: 0,
     forgedWeaponsCount: 0,
+    collectedWeaponIds: [],
+    equippedChestWeaponId: null,
+    chestWeaponBonus: 0,
   };
 }
 
@@ -73,9 +77,13 @@ export function loadSaveData(): SaveData | null {
       petId: parsed.petId ?? null,
       shivaTandavaSeen: Boolean(parsed.shivaTandavaSeen),
       isGod: Boolean(parsed.isGod),
+      enemiesDefeatedInArea: parsed.enemiesDefeatedInArea ?? {},
       forgeShards: typeof parsed.forgeShards === 'number' ? parsed.forgeShards : 2,
       forgedWeaponBonus: typeof parsed.forgedWeaponBonus === 'number' ? parsed.forgedWeaponBonus : 0,
       forgedWeaponsCount: typeof parsed.forgedWeaponsCount === 'number' ? parsed.forgedWeaponsCount : 0,
+      collectedWeaponIds: Array.isArray(parsed.collectedWeaponIds) ? parsed.collectedWeaponIds : [],
+      equippedChestWeaponId: parsed.equippedChestWeaponId ?? null,
+      chestWeaponBonus: typeof parsed.chestWeaponBonus === 'number' ? parsed.chestWeaponBonus : 0,
       flags: {
         ...base.flags,
         ...(parsed.flags ?? {}),
