@@ -80,13 +80,17 @@ export class WorldBuilder {
     const sandstoneMat = trackMat(
       new THREE.MeshStandardMaterial({
         map: this.textures.sandstone,
-        roughness: 0.88,
+        bumpMap: this.textures.sandstoneBump,
+        bumpScale: 0.045,
+        roughness: 0.86,
         metalness: 0.05,
       })
     );
     const darkStoneMat = trackMat(
       new THREE.MeshStandardMaterial({
         map: this.textures.catacombStone,
+        bumpMap: this.textures.stoneBump,
+        bumpScale: 0.035,
         roughness: 0.82,
         metalness: 0.12,
       })
@@ -498,6 +502,67 @@ export class WorldBuilder {
       });
     };
 
+    // Celestial Sky Disc / Moon / Eclipse Landmark (visible in outdoor realms)
+    const createSkyLandmark = (
+      discColor: number,
+      haloColor: number,
+      isEclipse = false,
+      pos: [number, number, number] = [20, 42, -52]
+    ) => {
+      const skyGroup = new THREE.Group();
+      skyGroup.position.set(pos[0], pos[1], pos[2]);
+      skyGroup.lookAt(0, 1.5, 0);
+
+      const halo = new THREE.Mesh(
+        trackGeo(new THREE.RingGeometry(4.2, 7.8, 32)),
+        trackMat(
+          new THREE.MeshBasicMaterial({
+            color: haloColor,
+            transparent: true,
+            opacity: 0.24,
+            side: THREE.DoubleSide,
+            depthWrite: false,
+            fog: false,
+          })
+        )
+      );
+      const body = new THREE.Mesh(
+        trackGeo(new THREE.CircleGeometry(4.0, 28)),
+        trackMat(
+          new THREE.MeshBasicMaterial({
+            color: isEclipse ? 0x070408 : discColor,
+            transparent: true,
+            opacity: isEclipse ? 0.96 : 0.88,
+            side: THREE.DoubleSide,
+            depthWrite: false,
+            fog: false,
+          })
+        )
+      );
+      body.position.z = 0.05;
+      skyGroup.add(halo, body);
+
+      if (isEclipse) {
+        const corona = new THREE.Mesh(
+          trackGeo(new THREE.RingGeometry(3.85, 4.45, 32)),
+          trackMat(
+            new THREE.MeshBasicMaterial({
+              color: discColor,
+              transparent: true,
+              opacity: 0.85,
+              side: THREE.DoubleSide,
+              depthWrite: false,
+              fog: false,
+            })
+          )
+        );
+        corona.position.z = 0.08;
+        skyGroup.add(corona);
+      }
+
+      root.add(skyGroup);
+    };
+
     // Atmospheric Particles helper
     const createAmbientParticles = (count: number, radius: number, height: number, color: number, size = 0.16) => {
       const actualCount = this.lowSpec ? Math.max(16, Math.round(count * 0.35)) : count;
@@ -653,6 +718,7 @@ export class WorldBuilder {
       createLoreTablet,
       createTrialShrine,
       createAmbientParticles,
+      createSkyLandmark,
       finalizeArea,
     });
     if (extendedBuilt) {
@@ -705,7 +771,9 @@ export class WorldBuilder {
         trackMat(
           new THREE.MeshStandardMaterial({
             map: this.textures.stonePath,
-            roughness: 0.9,
+            bumpMap: this.textures.stoneBump,
+            bumpScale: 0.035,
+            roughness: 0.88,
           })
         )
       );
@@ -713,6 +781,8 @@ export class WorldBuilder {
       path.position.set(0, 0.02, 0);
       path.receiveShadow = true;
       root.add(path);
+
+      createSkyLandmark(0xdbeafe, 0x60a5fa, false, [22, 40, -50]);
 
       // Instanced dense 3D forest trees (outer ring + scattered inner grove)
       const treeCoords: Array<{ x: number; z: number; s: number }> = [];
@@ -734,7 +804,12 @@ export class WorldBuilder {
 
       const trunkGeo = trackGeo(new THREE.CylinderGeometry(0.38, 0.62, 6.2, 8));
       const trunkMat = trackMat(
-        new THREE.MeshStandardMaterial({ map: this.textures.bark, roughness: 0.92 })
+        new THREE.MeshStandardMaterial({
+          map: this.textures.bark,
+          bumpMap: this.textures.barkBump,
+          bumpScale: 0.06,
+          roughness: 0.92,
+        })
       );
       const canopyGeo = trackGeo(new THREE.DodecahedronGeometry(2.6, 1));
       const canopyMat = trackMat(
@@ -839,7 +914,7 @@ export class WorldBuilder {
       return finalizeArea({
         areaId,
         name: 'Forgotten Forest',
-        subtitle: 'Chapter I · Grove of Whispering Banyans',
+        subtitle: 'Area 1 · Grove of Whispering Banyans',
         isStoneGround: false,
         boundsRadius: 35,
         defaultSpawn: new THREE.Vector3(0, 0, 26),
@@ -1027,7 +1102,8 @@ export class WorldBuilder {
       );
       createTrialShrine('trial_temple', 0, 0, 18);
 
-      // Exit Portal to Catacombs
+      // Exit Portal to Catacombs + Return Portal to Forgotten Forest
+      createSkyLandmark(0xfde68a, 0xf59e0b, false, [18, 42, -52]);
       createPortalGate(
         'portal_temple_catacombs',
         0,
@@ -1038,6 +1114,17 @@ export class WorldBuilder {
         !collectedArtifacts.includes('trishul_fragment'),
         'Claim the Trishul Fragment to open the Catacomb Descent',
         0x38bdf8
+      );
+      createPortalGate(
+        'portal_temple_forest',
+        0,
+        0,
+        26.5,
+        'forest',
+        'Return: Forgotten Forest (Area 1)',
+        false,
+        '',
+        0x94a3b8
       );
 
       enemySpawns.push(
@@ -1059,7 +1146,7 @@ export class WorldBuilder {
       return finalizeArea({
         areaId,
         name: 'Ancient Temple',
-        subtitle: 'Chapter II · Mandapa of Echoing Bells',
+        subtitle: 'Area 2 · Mandapa of Echoing Bells',
         isStoneGround: true,
         boundsRadius: 34,
         defaultSpawn: new THREE.Vector3(0, 0, 23),
@@ -1168,7 +1255,7 @@ export class WorldBuilder {
       );
       createTrialShrine('trial_catacombs', -6, 0, 18);
 
-      // Exit Portal to Sunken Stepwell (Chapter IV)
+      // Exit Portal to Sunken Stepwell (Chapter IV) + Return Portal to Temple
       createPortalGate(
         'portal_catacombs_stepwell',
         0,
@@ -1179,6 +1266,17 @@ export class WorldBuilder {
         !collectedArtifacts.includes('ancient_yantra'),
         'Recover the Ancient Yantra in the West Crypt first',
         0x38bdf8
+      );
+      createPortalGate(
+        'portal_catacombs_temple',
+        0,
+        0,
+        26.5,
+        'temple',
+        'Return: Ancient Temple (Area 2)',
+        false,
+        '',
+        0x94a3b8
       );
 
       enemySpawns.push(
@@ -1194,7 +1292,7 @@ export class WorldBuilder {
       return finalizeArea({
         areaId,
         name: 'Underground Catacombs',
-        subtitle: 'Chapter III · Vaults Beneath the Roots',
+        subtitle: 'Area 3 · Vaults Beneath the Roots',
         isStoneGround: true,
         boundsRadius: 30,
         defaultSpawn: new THREE.Vector3(0, 0, 24),
@@ -1327,7 +1425,9 @@ export class WorldBuilder {
       );
       createTrialShrine('trial_sanctum', 4.5, 0, 15);
 
-      // Eclipse Gate to Final Chamber
+      createSkyLandmark(0xef4444, 0xb91c1c, true, [-16, 38, -48]);
+
+      // Eclipse Gate to Final Chamber + South Return Portal
       createPortalGate(
         'portal_sanctum_final',
         0,
@@ -1338,6 +1438,17 @@ export class WorldBuilder {
         flags.purifiedMonoliths.length < 3,
         `Purify all 3 Monoliths (${flags.purifiedMonoliths.length}/3)`,
         0xef4444
+      );
+      createPortalGate(
+        'portal_sanctum_prev',
+        0,
+        0,
+        23.2,
+        'realm_98',
+        'Return: Eclipse Antechamber (Area 98)',
+        false,
+        '',
+        0x94a3b8
       );
 
       enemySpawns.push(
@@ -1353,7 +1464,7 @@ export class WorldBuilder {
       return finalizeArea({
         areaId,
         name: 'Cursed Sanctum',
-        subtitle: 'Chapter IX · Bridges Above the Abyss',
+        subtitle: 'Area 99 · Bridges Above the Abyss',
         isStoneGround: true,
         boundsRadius: 27,
         defaultSpawn: new THREE.Vector3(0, 0, 22),
@@ -1424,6 +1535,19 @@ export class WorldBuilder {
     createRelicChest('chest_final_1', 7, 0, 14);
     createTrialShrine('trial_final', -7, 0, 14);
 
+    createSkyLandmark(0xfbbf24, 0xef4444, true, [0, 38, -54]);
+    createPortalGate(
+      'portal_final_sanctum',
+      0,
+      0,
+      21.5,
+      'sanctum',
+      'Return: Cursed Sanctum (Area 99)',
+      false,
+      '',
+      0x94a3b8
+    );
+
     // Final Boss: Kali Purusha, Sovereign of Kalyug
     if (!flags.defeatedBosses.includes('boss_kali')) {
       enemySpawns.push({
@@ -1438,7 +1562,7 @@ export class WorldBuilder {
     return finalizeArea({
       areaId: 'final_chamber',
       name: 'Final Chamber',
-      subtitle: 'Chapter X · Sanctum of the Eclipse',
+      subtitle: 'Area 100 · Sanctum of the Eclipse',
       isStoneGround: true,
       boundsRadius: 24,
       defaultSpawn: new THREE.Vector3(0, 0, 18),

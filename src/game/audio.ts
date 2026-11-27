@@ -1,3 +1,4 @@
+import { getRealm } from './realms';
 import { AreaId, EnemyType } from './types';
 
 export type MusicContext = 'intro' | 'menu' | AreaId;
@@ -210,78 +211,12 @@ export class AudioEngine {
       return;
     }
     const now = this.ctx.currentTime;
-    switch (area) {
-      case 'forest':
-        this.droneOsc1.frequency.setTargetAtTime(65.4, now, 0.8);
-        this.droneOsc2.frequency.setTargetAtTime(98.0, now, 0.8);
-        this.droneFilter.frequency.setTargetAtTime(140, now, 0.8);
-        this.windFilter.frequency.setTargetAtTime(420, now, 0.8);
-        this.windGain.gain.setTargetAtTime(0.18, now, 0.8);
-        break;
-      case 'temple':
-        this.droneOsc1.frequency.setTargetAtTime(73.4, now, 0.8);
-        this.droneOsc2.frequency.setTargetAtTime(110.0, now, 0.8);
-        this.droneFilter.frequency.setTargetAtTime(220, now, 0.8);
-        this.windFilter.frequency.setTargetAtTime(280, now, 0.8);
-        this.windGain.gain.setTargetAtTime(0.11, now, 0.8);
-        break;
-      case 'catacombs':
-        this.droneOsc1.frequency.setTargetAtTime(55.0, now, 0.8);
-        this.droneOsc2.frequency.setTargetAtTime(82.4, now, 0.8);
-        this.droneFilter.frequency.setTargetAtTime(125, now, 0.8);
-        this.windFilter.frequency.setTargetAtTime(170, now, 0.8);
-        this.windGain.gain.setTargetAtTime(0.09, now, 0.8);
-        break;
-      case 'sunken_stepwell':
-        this.droneOsc1.frequency.setTargetAtTime(69.3, now, 0.8);
-        this.droneOsc2.frequency.setTargetAtTime(103.8, now, 0.8);
-        this.droneFilter.frequency.setTargetAtTime(195, now, 0.8);
-        this.windFilter.frequency.setTargetAtTime(250, now, 0.8);
-        this.windGain.gain.setTargetAtTime(0.12, now, 0.8);
-        break;
-      case 'ashram_ruins':
-        this.droneOsc1.frequency.setTargetAtTime(77.8, now, 0.8);
-        this.droneOsc2.frequency.setTargetAtTime(116.5, now, 0.8);
-        this.droneFilter.frequency.setTargetAtTime(240, now, 0.8);
-        this.windFilter.frequency.setTargetAtTime(380, now, 0.8);
-        this.windGain.gain.setTargetAtTime(0.15, now, 0.8);
-        break;
-      case 'asura_fortress':
-        this.droneOsc1.frequency.setTargetAtTime(51.9, now, 0.8);
-        this.droneOsc2.frequency.setTargetAtTime(77.8, now, 0.8);
-        this.droneFilter.frequency.setTargetAtTime(290, now, 0.8);
-        this.windFilter.frequency.setTargetAtTime(480, now, 0.8);
-        this.windGain.gain.setTargetAtTime(0.17, now, 0.8);
-        break;
-      case 'astral_observatory':
-        this.droneOsc1.frequency.setTargetAtTime(82.4, now, 0.8);
-        this.droneOsc2.frequency.setTargetAtTime(123.5, now, 0.8);
-        this.droneFilter.frequency.setTargetAtTime(310, now, 0.8);
-        this.windFilter.frequency.setTargetAtTime(440, now, 0.8);
-        this.windGain.gain.setTargetAtTime(0.14, now, 0.8);
-        break;
-      case 'serpent_caverns':
-        this.droneOsc1.frequency.setTargetAtTime(58.2, now, 0.8);
-        this.droneOsc2.frequency.setTargetAtTime(87.3, now, 0.8);
-        this.droneFilter.frequency.setTargetAtTime(150, now, 0.8);
-        this.windFilter.frequency.setTargetAtTime(190, now, 0.8);
-        this.windGain.gain.setTargetAtTime(0.1, now, 0.8);
-        break;
-      case 'sanctum':
-        this.droneOsc1.frequency.setTargetAtTime(61.7, now, 0.8);
-        this.droneOsc2.frequency.setTargetAtTime(92.5, now, 0.8);
-        this.droneFilter.frequency.setTargetAtTime(270, now, 0.8);
-        this.windFilter.frequency.setTargetAtTime(520, now, 0.8);
-        this.windGain.gain.setTargetAtTime(0.16, now, 0.8);
-        break;
-      case 'final_chamber':
-        this.droneOsc1.frequency.setTargetAtTime(58.2, now, 0.8);
-        this.droneOsc2.frequency.setTargetAtTime(87.3, now, 0.8);
-        this.droneFilter.frequency.setTargetAtTime(340, now, 0.8);
-        this.windFilter.frequency.setTargetAtTime(240, now, 0.8);
-        this.windGain.gain.setTargetAtTime(0.13, now, 0.8);
-        break;
-    }
+    const realm = getRealm(area);
+    this.droneOsc1.frequency.setTargetAtTime(realm.droneHz[0], now, 0.8);
+    this.droneOsc2.frequency.setTargetAtTime(realm.droneHz[1], now, 0.8);
+    this.droneFilter.frequency.setTargetAtTime(realm.filterHz, now, 0.8);
+    this.windFilter.frequency.setTargetAtTime(realm.windHz, now, 0.8);
+    this.windGain.gain.setTargetAtTime(realm.windGain, now, 0.8);
   }
 
   public playFootstep(isStone: boolean, sprinting: boolean): void {
@@ -641,24 +576,12 @@ export class AudioEngine {
     const now = this.ctx.currentTime;
     const step = this.musicStep++;
 
-    // Raga-inspired mythological scales (Hz)
-    // Bhairav / Kalyug atmospheric scales
-    const scales: Record<string, number[]> = {
-      intro: [220.0, 233.08, 277.18, 293.66, 329.63, 349.23, 415.3, 440.0],
-      menu: [220.0, 246.94, 277.18, 329.63, 369.99, 440.0],
-      forest: [196.0, 207.65, 246.94, 261.63, 293.66, 311.13, 392.0],
-      temple: [220.0, 233.08, 277.18, 293.66, 329.63, 349.23, 440.0],
-      catacombs: [164.81, 174.61, 207.65, 220.0, 246.94, 261.63, 329.63],
-      sunken_stepwell: [174.61, 196.0, 220.0, 261.63, 293.66, 349.23],
-      ashram_ruins: [220.0, 246.94, 293.66, 329.63, 392.0, 440.0],
-      asura_fortress: [146.83, 164.81, 185.0, 220.0, 246.94, 293.66],
-      astral_observatory: [246.94, 277.18, 329.63, 369.99, 440.0, 493.88],
-      serpent_caverns: [164.81, 185.0, 207.65, 246.94, 277.18, 329.63],
-      sanctum: [185.0, 196.0, 233.08, 246.94, 277.18, 293.66, 369.99],
-      final_chamber: [146.83, 155.56, 185.0, 220.0, 233.08, 277.18, 293.66],
-    };
-
-    const scale = scales[this.musicContext] ?? scales.forest;
+    const scale =
+      this.musicContext === 'intro'
+        ? [220.0, 233.08, 277.18, 293.66, 329.63, 349.23, 415.3, 440.0]
+        : this.musicContext === 'menu'
+        ? [220.0, 246.94, 277.18, 329.63, 369.99, 440.0]
+        : getRealm(this.musicContext).ragaScale;
     const isBoss = this.musicContext === 'final_chamber';
     const isQuiet = this.musicContext === 'intro';
 

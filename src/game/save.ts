@@ -1,3 +1,4 @@
+import { REALMS_BY_ID } from './realms';
 import { GameSettings, SaveData } from './types';
 
 const SAVE_KEY = 'shadow_exe_kalyug_save_v1';
@@ -68,9 +69,11 @@ export function loadSaveData(): SaveData | null {
       return null;
     }
     const base = createNewSaveData();
+    const validAreaId = REALMS_BY_ID[parsed.areaId] ? parsed.areaId : 'forest';
     return {
       ...base,
       ...parsed,
+      areaId: validAreaId,
       playerClass: parsed.playerClass ?? 'warrior',
       activeWeaponName: parsed.activeWeaponName ?? base.activeWeaponName,
       blessings: Array.isArray(parsed.blessings) ? parsed.blessings : [],

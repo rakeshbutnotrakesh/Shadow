@@ -9,6 +9,10 @@ export interface EnemySpawnConfig {
   position: THREE.Vector3;
   level?: number;
   patrolRadius?: number;
+  tintHex?: number;
+  isWarden?: boolean;
+  wardenTitle?: string;
+  scaleMult?: number;
 }
 
 export type EnemyActionEvent =
@@ -33,6 +37,8 @@ function getEnemyGeo(key: string, factory: () => THREE.BufferGeometry): THREE.Bu
 export class EnemyEntity {
   public readonly id: string;
   public readonly type: EnemyType;
+  public readonly isWarden: boolean;
+  public readonly wardenTitle?: string;
   public readonly group = new THREE.Group();
   public readonly position = this.group.position;
   public readonly spawnPosition: THREE.Vector3;
@@ -60,10 +66,13 @@ export class EnemyEntity {
   private orbCooldown = 2.5;
   private shockwaveCooldown = 6.0;
   private summonTriggered = false;
+  private alertTimer = 0;
   private patrolAngle = Math.random() * Math.PI * 2;
   private animTime = Math.random() * 10;
   private knockbackVel = new THREE.Vector3();
   private growlCooldown = 1 + Math.random() * 4;
+  private tintHex?: number;
+  private scaleMult: number;
 
   // Animated subparts
   private bodyGroup = new THREE.Group();
@@ -73,6 +82,7 @@ export class EnemyEntity {
   private rightLeg = new THREE.Group();
   private haloRing1: THREE.Mesh | null = null;
   private haloRing2: THREE.Mesh | null = null;
+  private wardenCrown: THREE.Mesh | null = null;
   private detectOutlineMesh: THREE.Mesh;
   private bodyMaterials: THREE.MeshStandardMaterial[] = [];
   private baseEmissives: Array<{ mat: THREE.MeshStandardMaterial; hex: number; intensity: number }> = [];
@@ -81,6 +91,10 @@ export class EnemyEntity {
   constructor(config: EnemySpawnConfig, scene: THREE.Scene) {
     this.id = config.id;
     this.type = config.type;
+    this.isWarden = Boolean(config.isWarden);
+    this.wardenTitle = config.wardenTitle;
+    this.tintHex = config.tintHex;
+    this.scaleMult = config.scaleMult ?? (this.isWarden ? 1.28 : 1.0);
     this.spawnPosition = config.position.clone();
     this.group.position.copy(config.position);
     this.group.add(this.bodyGroup);
@@ -141,9 +155,41 @@ export class EnemyEntity {
         this.height = 4.4;
         break;
     }
+    if (this.isWarden) {
+      this.maxHealth = Math.round(this.maxHealth * 1.8);
+      this.damage = Math.round(this.damage * 1.28);
+      this.xpReward = Math.round(this.xpReward * 2.25);
+      this.detectRadius = Math.max(this.detectRadius, 22);
+      this.attackRange *= 1.15;
+      this.radius *= this.scaleMult;
+      this.height *= this.scaleMult;
+    }
+
     this.health = this.maxHealth;
 
     this.buildModel();
+    if (this.scaleMult !== 1.0) {
+      this.bodyGroup.scale.setScalar(this.scaleMult);
+    }
+
+    if (this.isWarden) {
+      const crownMat = this.trackMat(
+        new THREE.MeshStandardMaterial({
+          color: 0xfbbf24,
+          emissive: this.tintHex ?? 0xf59e0b,
+          emissiveIntensity: 2.0,
+          roughness: 0.2,
+          metalness: 0.85,
+        })
+      );
+      this.wardenCrown = new THREE.Mesh(
+        getEnemyGeo('warden_crown', () => new THREE.TorusGeometry(0.68, 0.055, 6, 20)),
+        crownMat
+      );
+      this.wardenCrown.rotation.x = Math.PI / 2;
+      this.wardenCrown.position.y = this.height + 0.35;
+      this.group.add(this.wardenCrown);
+    }
 
     // Shadow Detection highlight ring (visible only when Shadow Detection reaches enemy)
     this.detectOutlineMesh = new THREE.Mesh(
@@ -151,7 +197,7 @@ export class EnemyEntity {
         new THREE.RingGeometry(this.radius * 1.15, this.radius * 1.45, 24)
       ),
       new THREE.MeshBasicMaterial({
-        color: this.type === 'boss_kali' ? 0xef4444 : 0x38bdf8,
+        color: this.type === 'boss_kali' || this.isWarden ? 0xef4444 : 0x38bdf8,
         side: THREE.DoubleSide,
         transparent: true,
         opacity: 0.75,
@@ -177,16 +223,23 @@ export class EnemyEntity {
   }
 
   private buildModel(): void {
+    const baseArmorCol = new THREE.Color(0x26202e);
+    const eyeCol = new THREE.Color(0xdc2626);
+    if (this.tintHex !== undefined) {
+      baseArmorCol.lerp(new THREE.Color(this.tintHex), 0.32);
+      eyeCol.lerp(new THREE.Color(this.tintHex), 0.45);
+    }
+
     const shadowObsidian = this.trackMat(
       new THREE.MeshStandardMaterial({ color: 0x16121d, roughness: 0.85, metalness: 0.15 })
     );
     const darkArmor = this.trackMat(
-      new THREE.MeshStandardMaterial({ color: 0x26202e, roughness: 0.45, metalness: 0.72 })
+      new THREE.MeshStandardMaterial({ color: baseArmorCol, roughness: 0.45, metalness: 0.72 })
     );
     const eyeCrimson = this.trackMat(
       new THREE.MeshStandardMaterial({
-        color: 0xff2e2e,
-        emissive: 0xdc2626,
+        color: eyeCol,
+        emissive: eyeCol,
         emissiveIntensity: 2.2,
         roughness: 0.2,
       })
@@ -574,14 +627,17 @@ export class EnemyEntity {
     if (!this.alive || this.dying) return false;
     this.health = Math.max(0, this.health - amount);
     this.hitFlashTimer = 0.14;
-    this.stunTimer = this.type === 'boss_kali' ? 0.05 : 0.22;
-    this.knockbackVel.copy(knockbackDir).multiplyScalar(this.type === 'boss_kali' ? force * 0.22 : force);
+    this.alertTimer = 8.5;
+    this.stunTimer = this.type === 'boss_kali' ? 0.05 : this.isWarden ? 0.12 : 0.22;
+    const kbResist = this.type === 'boss_kali' ? 0.22 : this.isWarden ? 0.55 : 1.0;
+    this.knockbackVel.copy(knockbackDir).multiplyScalar(force * kbResist);
 
     if (this.health <= 0) {
       this.alive = false;
       this.dying = true;
       this.deathTimer = 0.95;
       this.detectOutlineMesh.visible = false;
+      if (this.wardenCrown) this.wardenCrown.visible = false;
       return true;
     }
 
@@ -653,8 +709,13 @@ export class EnemyEntity {
     }
 
     if (this.attackCooldown > 0) this.attackCooldown -= dt;
+    if (this.alertTimer > 0) this.alertTimer = Math.max(0, this.alertTimer - dt);
+
     if (this.stunTimer > 0) {
       this.stunTimer -= dt;
+      this.resolveCollisions(colliders, boundsRadius);
+      const targetGroundY = groundHeightAt(this.position.x, this.position.z);
+      this.position.y = THREE.MathUtils.damp(this.position.y, targetGroundY, 18, dt);
       this.animate(dt, false);
       return events;
     }
@@ -711,7 +772,7 @@ export class EnemyEntity {
     }
 
     // Dark Spirit occasional ranged wisp
-    if (this.type === 'dark_spirit' && distToPlayer > 5 && distToPlayer < 14) {
+    if (this.type === 'dark_spirit' && distToPlayer > 5 && distToPlayer < 15) {
       this.orbCooldown -= dt;
       if (this.orbCooldown <= 0) {
         this.orbCooldown = 4.2;
@@ -721,13 +782,14 @@ export class EnemyEntity {
           direction: _toPlayer.clone().normalize(),
           damage: 11,
           speed: 9.5,
-          color: 0x38bdf8,
+          color: this.tintHex ?? 0x38bdf8,
         });
       }
     }
 
     // AI state machine
     let isMoving = false;
+    const effectiveDetect = this.alertTimer > 0 ? Math.max(this.detectRadius, 36) : this.detectRadius;
     if (this.state === 'windup') {
       this.stateTimer -= dt;
       if (this.stateTimer <= 0) {
@@ -747,7 +809,7 @@ export class EnemyEntity {
         this.state = 'chase';
       }
     } else {
-      if (distToPlayer <= this.detectRadius) {
+      if (distToPlayer <= effectiveDetect) {
         this.state = 'chase';
         const targetAngle = Math.atan2(_toPlayer.x, _toPlayer.z);
         this.group.rotation.y = this.lerpAngle(this.group.rotation.y, targetAngle, 1 - Math.exp(-8 * dt));
@@ -782,9 +844,10 @@ export class EnemyEntity {
       }
     }
 
-    // Clamp to colliders & ground height
+    // Clamp to colliders & smooth ground height
     this.resolveCollisions(colliders, boundsRadius);
-    this.position.y = groundHeightAt(this.position.x, this.position.z);
+    const targetGroundY = groundHeightAt(this.position.x, this.position.z);
+    this.position.y = THREE.MathUtils.damp(this.position.y, targetGroundY, 18, dt);
 
     this.animate(dt, isMoving);
     return events;
@@ -793,6 +856,10 @@ export class EnemyEntity {
   private animate(dt: number, isMoving: boolean): void {
     if (this.haloRing1) this.haloRing1.rotation.z += dt * 1.4;
     if (this.haloRing2) this.haloRing2.rotation.y += dt * 2.1;
+    if (this.wardenCrown) {
+      this.wardenCrown.rotation.z += dt * 1.8;
+      this.wardenCrown.position.y = this.height + 0.35 + Math.sin(this.animTime * 3.0) * 0.08;
+    }
 
     if (this.type === 'dark_spirit') {
       this.bodyGroup.position.y = Math.sin(this.animTime * 3.2) * 0.22;

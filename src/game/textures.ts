@@ -2,11 +2,14 @@ import * as THREE from 'three';
 
 export interface ProceduralTextureSet {
   sandstone: THREE.CanvasTexture;
+  sandstoneBump: THREE.CanvasTexture;
   forestGround: THREE.CanvasTexture;
   stonePath: THREE.CanvasTexture;
+  stoneBump: THREE.CanvasTexture;
   catacombStone: THREE.CanvasTexture;
   obsidianFloor: THREE.CanvasTexture;
   bark: THREE.CanvasTexture;
+  barkBump: THREE.CanvasTexture;
   mandalaFloor: THREE.CanvasTexture;
   particleGlow: THREE.CanvasTexture;
 }
@@ -46,20 +49,30 @@ export function createProceduralTextures(
   const sz = lowMemory ? 256 : 512;
   const sc = lowMemory ? 0.5 : 1;
 
-  // 1. Carved Sandstone (Indian Temple Architecture)
+  // 1. Carved Sandstone (Indian Temple Architecture) + Matching Bump Map
   const [sandCanvas, sandCtx] = makeCanvas(sz);
+  const [sandBumpCanvas, sandBumpCtx] = makeCanvas(sz);
   sandCtx.fillStyle = '#6f553b';
   sandCtx.fillRect(0, 0, sz, sz);
+  sandBumpCtx.fillStyle = '#a8a8a8';
+  sandBumpCtx.fillRect(0, 0, sz, sz);
   const sandSpecks = lowMemory ? 900 : 4500;
   for (let i = 0; i < sandSpecks; i++) {
     const x = Math.random() * sz;
     const y = Math.random() * sz;
     const v = 85 + Math.floor(Math.random() * 45);
+    const w = 2 + Math.random() * 4 * sc;
+    const h = 2 + Math.random() * 3 * sc;
     sandCtx.fillStyle = `rgba(${v + 18}, ${v}, ${v - 24}, 0.16)`;
-    sandCtx.fillRect(x, y, 2 + Math.random() * 4 * sc, 2 + Math.random() * 3 * sc);
+    sandCtx.fillRect(x, y, w, h);
+    const bv = 135 + Math.floor(Math.random() * 70);
+    sandBumpCtx.fillStyle = `rgba(${bv}, ${bv}, ${bv}, 0.25)`;
+    sandBumpCtx.fillRect(x, y, w, h);
   }
   sandCtx.strokeStyle = 'rgba(32, 22, 14, 0.65)';
   sandCtx.lineWidth = lowMemory ? 2 : 3;
+  sandBumpCtx.strokeStyle = 'rgba(28, 28, 28, 0.85)';
+  sandBumpCtx.lineWidth = lowMemory ? 3 : 4;
   const step = 128 * sc;
   for (let row = 0; row < 4; row++) {
     const y = row * step;
@@ -67,6 +80,10 @@ export function createProceduralTextures(
     sandCtx.moveTo(0, y);
     sandCtx.lineTo(sz, y);
     sandCtx.stroke();
+    sandBumpCtx.beginPath();
+    sandBumpCtx.moveTo(0, y);
+    sandBumpCtx.lineTo(sz, y);
+    sandBumpCtx.stroke();
     const offset = row % 2 === 0 ? 0 : step * 0.5;
     for (let col = 0; col < 4; col++) {
       const x = (col * step + offset) % sz;
@@ -77,9 +94,18 @@ export function createProceduralTextures(
       sandCtx.strokeStyle = 'rgba(180, 140, 92, 0.14)';
       sandCtx.strokeRect(x + 14 * sc, y + 14 * sc, 100 * sc, 100 * sc);
       sandCtx.strokeStyle = 'rgba(32, 22, 14, 0.65)';
+
+      sandBumpCtx.beginPath();
+      sandBumpCtx.moveTo(x, y);
+      sandBumpCtx.lineTo(x, y + step);
+      sandBumpCtx.stroke();
+      sandBumpCtx.strokeStyle = 'rgba(220, 220, 220, 0.45)';
+      sandBumpCtx.strokeRect(x + 14 * sc, y + 14 * sc, 100 * sc, 100 * sc);
+      sandBumpCtx.strokeStyle = 'rgba(28, 28, 28, 0.85)';
     }
   }
   const sandstone = finalizeTexture(sandCanvas, 2, 2, maxAniso, true);
+  const sandstoneBump = finalizeTexture(sandBumpCanvas, 2, 2, maxAniso, false);
 
   // 2. Forest Ground (Dark damp moss, loam & roots)
   const [forestCanvas, forestCtx] = makeCanvas(sz);
@@ -103,10 +129,13 @@ export function createProceduralTextures(
   }
   const forestGround = finalizeTexture(forestCanvas, 18, 18, maxAniso, true);
 
-  // 3. Ancient Stone Path
+  // 3. Ancient Stone Path + Matching Bump Map
   const [pathCanvas, pathCtx] = makeCanvas(sz);
+  const [stoneBumpCanvas, stoneBumpCtx] = makeCanvas(sz);
   pathCtx.fillStyle = '#3d3730';
   pathCtx.fillRect(0, 0, sz, sz);
+  stoneBumpCtx.fillStyle = '#303030';
+  stoneBumpCtx.fillRect(0, 0, sz, sz);
   const tileStep = 64 * sc;
   const tilePad = 3 * sc;
   const tileInner = 58 * sc;
@@ -118,9 +147,14 @@ export function createProceduralTextures(
       pathCtx.strokeStyle = 'rgba(22, 32, 18, 0.55)';
       pathCtx.lineWidth = lowMemory ? 1.5 : 2;
       pathCtx.strokeRect(x + tilePad, y + tilePad, tileInner, tileInner);
+
+      const bumpLevel = 165 + Math.floor(Math.random() * 55);
+      stoneBumpCtx.fillStyle = `rgb(${bumpLevel}, ${bumpLevel}, ${bumpLevel})`;
+      stoneBumpCtx.fillRect(x + tilePad, y + tilePad, tileInner, tileInner);
     }
   }
   const stonePath = finalizeTexture(pathCanvas, 4, 16, maxAniso, true);
+  const stoneBump = finalizeTexture(stoneBumpCanvas, 6, 6, maxAniso, false);
 
   // 4. Catacomb Damp Slate
   const [catCanvas, catCtx] = makeCanvas(sz);
@@ -163,22 +197,35 @@ export function createProceduralTextures(
   }
   const obsidianFloor = finalizeTexture(obsCanvas, 8, 8, maxAniso, true);
 
-  // 6. Bark
+  // 6. Bark + Bark Bump
   const barkSz = lowMemory ? 128 : 256;
   const [barkCanvas, barkCtx] = makeCanvas(barkSz);
+  const [barkBumpCanvas, barkBumpCtx] = makeCanvas(barkSz);
   barkCtx.fillStyle = '#2d2016';
   barkCtx.fillRect(0, 0, barkSz, barkSz);
+  barkBumpCtx.fillStyle = '#707070';
+  barkBumpCtx.fillRect(0, 0, barkSz, barkSz);
   const barkLines = lowMemory ? 55 : 120;
   for (let i = 0; i < barkLines; i++) {
     const x = Math.random() * barkSz;
+    const xEnd = x + (Math.random() - 0.5) * 14 * sc;
+    const lw = (2 + Math.random() * 3) * sc;
     barkCtx.strokeStyle = i % 2 === 0 ? 'rgba(18, 12, 8, 0.55)' : 'rgba(68, 48, 32, 0.35)';
-    barkCtx.lineWidth = (2 + Math.random() * 3) * sc;
+    barkCtx.lineWidth = lw;
     barkCtx.beginPath();
     barkCtx.moveTo(x, 0);
-    barkCtx.lineTo(x + (Math.random() - 0.5) * 14 * sc, barkSz);
+    barkCtx.lineTo(xEnd, barkSz);
     barkCtx.stroke();
+
+    barkBumpCtx.strokeStyle = i % 2 === 0 ? 'rgba(25, 25, 25, 0.7)' : 'rgba(215, 215, 215, 0.55)';
+    barkBumpCtx.lineWidth = lw;
+    barkBumpCtx.beginPath();
+    barkBumpCtx.moveTo(x, 0);
+    barkBumpCtx.lineTo(xEnd, barkSz);
+    barkBumpCtx.stroke();
   }
   const bark = finalizeTexture(barkCanvas, 2, 4, maxAniso, true);
+  const barkBump = finalizeTexture(barkBumpCanvas, 2, 4, maxAniso, false);
 
   // 7. Mandala Floor Relief (Final Chamber)
   const manSz = lowMemory ? 512 : 1024;
@@ -241,11 +288,14 @@ export function createProceduralTextures(
 
   return {
     sandstone,
+    sandstoneBump,
     forestGround,
     stonePath,
+    stoneBump,
     catacombStone,
     obsidianFloor,
     bark,
+    barkBump,
     mandalaFloor,
     particleGlow,
   };

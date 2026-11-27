@@ -17,8 +17,9 @@ import { ALL_ARTIFACT_IDS, ARTIFACTS } from '../game/inventory';
 import { KalyugGameEngine } from '../game/main';
 import { ALL_PET_IDS, PETS } from '../game/pet';
 import { ABILITIES, ALL_ABILITY_IDS } from '../game/progression';
-import { AreaId, ClassId, GameSettings, HudSnapshot } from '../game/types';
-import { AREA_NAMES, CHEST_WEAPONS } from '../game/weapons';
+import { getRealm, REALMS } from '../game/realms';
+import { ClassId, GameSettings, HudSnapshot } from '../game/types';
+import { CHEST_WEAPONS } from '../game/weapons';
 
 interface GameModalsProps {
   hud: HudSnapshot;
@@ -30,7 +31,13 @@ interface GameModalsProps {
   onCloseHelp: () => void;
 }
 
-const AREA_LABELS: Record<AreaId, string> = AREA_NAMES;
+const REALM_BUCKETS = [
+  { label: '1–20 (Easy/Med)', min: 1, max: 20 },
+  { label: '21–40 (Med)', min: 21, max: 40 },
+  { label: '41–60 (Med/Hard)', min: 41, max: 60 },
+  { label: '61–80 (Hard)', min: 61, max: 80 },
+  { label: '81–100 (Extreme/Final)', min: 81, max: 100 },
+];
 
 const TANDAVA_VERSES = [
   {
@@ -65,6 +72,7 @@ export const GameModals: React.FC<GameModalsProps> = ({
   const [showSettings, setShowSettings] = useState(false);
   const [invTab, setInvTab] = useState<'artifacts' | 'blessings' | 'abilities' | 'quests'>('artifacts');
   const [pickedClass, setPickedClass] = useState<ClassId>('warrior');
+  const [realmBucketIdx, setRealmBucketIdx] = useState(0);
 
   // HELP & NEXT STEP MODAL
   if (showHelp) {
@@ -73,28 +81,20 @@ export const GameModals: React.FC<GameModalsProps> = ({
       ? hud.activeQuest.objectives.filter((o) => !o.completed)
       : [];
 
-    const realmNextMap: Record<AreaId, string> = {
-      forest:
-        'Head north to the glowing Forest Gate portal and press [E] to enter the Ancient Temple.',
-      temple:
-        'Use the Catacombs Portal in the temple courtyard ([E]) once the Trishul Fragment is claimed.',
-      catacombs:
-        'Use the Sunken Stepwell Portal ([E]) once the Ancient Yantra is recovered.',
-      sunken_stepwell:
-        'Banish 3 Stepwell Shadows and enter the northern portal ([E]) to the Shattered Ashram.',
-      ashram_ruins:
-        'Clear 3 Ashram Threats and enter the northern portal ([E]) to the Obsidian Fortress.',
-      asura_fortress:
-        'Defeat 3 Fortress Guardians and enter the northern portal ([E]) to the Astral Observatory.',
-      astral_observatory:
-        'Banish 3 Observatory Shadows and descend ([E]) into the Naga Caverns.',
-      serpent_caverns:
-        'Clear 3 Cavern Threats and enter the northern portal ([E]) to the Cursed Sanctum.',
-      sanctum:
-        'Purify all 3 Corrupted Monoliths to unseal the northern Eclipse Gate to the Final Chamber.',
-      final_chamber:
-        'Claim the Divine Amulet at the threshold and defeat Kali Purusha to win the realm!',
-    };
+    const currentRealm = getRealm(hud.areaId);
+    const nextRealm = currentRealm.nextAreaId ? getRealm(currentRealm.nextAreaId) : null;
+    const realmNextGuidance =
+      hud.areaId === 'forest'
+        ? 'Head north to the glowing Forest Gate portal and press [E] to enter Area 2 (Ancient Temple).'
+        : hud.areaId === 'temple'
+        ? 'Use the Catacombs Portal in the temple courtyard ([E]) once the Trishul Fragment is claimed.'
+        : hud.areaId === 'catacombs'
+        ? 'Use the Sunken Stepwell Portal ([E]) once the Ancient Yantra is recovered.'
+        : hud.areaId === 'sanctum'
+        ? 'Purify all 3 Corrupted Monoliths to unseal the northern Eclipse Gate to Area 100 (Final Chamber).'
+        : hud.areaId === 'final_chamber'
+        ? 'Claim the Divine Amulet at the threshold and defeat Kali Purusha to win the realm!'
+        : `Banish ${currentRealm.requiredKills} Shadows in ${currentRealm.name} and enter the northern portal ([E]) to Area ${nextRealm?.index ?? 100} (${nextRealm?.name ?? 'Next Realm'}).`;
 
     const classTipMap: Record<ClassId, string> = {
       warrior:
@@ -115,60 +115,12 @@ export const GameModals: React.FC<GameModalsProps> = ({
         ? `Level 90: Experience the Shiva Tandava Stotram & +30% Power (${90 - hud.level} levels away).`
         : hud.level < 100
         ? `Level 100: Receive Maha Maya's Supreme Weapon & Ascend as a God (${100 - hud.level} levels away).`
-        : 'Ascended God (Lv 100/100): Enter the Final Chamber and banish Kali Purusha!';
+        : 'Ascended God (Lv 100/100): Enter Area 100 (Final Chamber) and banish Kali Purusha!';
 
-    const realmRoadmap: Array<{ id: AreaId; step: string; goal: string }> = [
-      {
-        id: 'forest',
-        step: '01. Forgotten Forest',
-        goal: 'Claim the Rudraksha, open Relic Chests for random weapon drops, and enter the Temple Gate.',
-      },
-      {
-        id: 'temple',
-        step: '02. Ancient Temple',
-        goal: 'Ring the Temple Bell, align the Mandala Altar, and claim the Trishul Fragment.',
-      },
-      {
-        id: 'catacombs',
-        step: '03. Underground Catacombs',
-        goal: 'Survive the vaults, loot chests, and recover the Ancient Yantra.',
-      },
-      {
-        id: 'sunken_stepwell',
-        step: '04. Sunken Stepwell',
-        goal: 'Purge 3 Stepwell Shadows around the Chand-Baori lotus pool and collect box weapons.',
-      },
-      {
-        id: 'ashram_ruins',
-        step: '05. Shattered Ashram',
-        goal: 'Defend the Rishi Gurukul courtyard and clear 3 Ashram threats to advance.',
-      },
-      {
-        id: 'asura_fortress',
-        step: '06. Obsidian Fortress',
-        goal: 'Break 3 Asura Rampart guardians and loot high-tier Epic/Mythic chest weapons.',
-      },
-      {
-        id: 'astral_observatory',
-        step: '07. Astral Observatory',
-        goal: 'Cleanse 3 shadows beneath the rotating Samrat Yantra rings.',
-      },
-      {
-        id: 'serpent_caverns',
-        step: '08. Naga Caverns',
-        goal: 'Clear 3 bioluminescent cavern guardians to reach the Cursed Sanctum.',
-      },
-      {
-        id: 'sanctum',
-        step: '09. Cursed Sanctum',
-        goal: 'Purify all 3 Corrupted Monoliths to unseal the Eclipse Gate and claim Sacred Mantra.',
-      },
-      {
-        id: 'final_chamber',
-        step: '10. Final Chamber',
-        goal: 'Claim the Divine Amulet and banish Kali Purusha, Sovereign of Kalyug.',
-      },
-    ];
+    const activeBucket = REALM_BUCKETS[realmBucketIdx];
+    const roadmapRealms = REALMS.filter(
+      (r) => r.index >= activeBucket.min && r.index <= activeBucket.max
+    );
 
     return (
       <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/82 p-3 sm:p-4">
@@ -196,7 +148,7 @@ export const GameModals: React.FC<GameModalsProps> = ({
               <div className="text-xs font-semibold text-[#d4a34a]">
                 {isPreGame
                   ? 'Getting Started'
-                  : `Your Next Step · ${hud.areaName} · Lv ${hud.level}/100 (${hud.difficultyTier})`}
+                  : `Your Next Step · Area ${hud.areaIndex}/100 (${hud.areaName}) · Lv ${hud.level}/100`}
               </div>
 
               {isPreGame ? (
@@ -210,7 +162,7 @@ export const GameModals: React.FC<GameModalsProps> = ({
                   </p>
                   <p>
                     2. Click <strong className="text-[#fbbf24]">Begin Journey</strong> (or{' '}
-                    <strong className="text-[#fbbf24]">Continue Saved</strong> if available) to enter the 3D Forgotten Forest.
+                    <strong className="text-[#fbbf24]">Continue Saved</strong> if available) to enter the 3D Forgotten Forest and explore 100 realms.
                   </p>
                 </div>
               ) : (
@@ -230,7 +182,7 @@ export const GameModals: React.FC<GameModalsProps> = ({
                     </div>
                   ) : (
                     <div className="font-semibold text-emerald-300">
-                      ✓ {realmNextMap[hud.areaId]}
+                      ✓ {realmNextGuidance}
                     </div>
                   )}
 
@@ -248,19 +200,37 @@ export const GameModals: React.FC<GameModalsProps> = ({
               )}
             </div>
 
-            {/* 10-Realm Roadmap */}
+            {/* 100-Realm Roadmap */}
             <div>
-              <h3 className="mb-2 font-display text-sm font-semibold text-[#f5efe4]">
-                10-Realm Progression Roadmap
-              </h3>
-              <div className="space-y-2">
-                {realmRoadmap.map((r) => {
+              <div className="mb-2 flex flex-wrap items-center justify-between gap-2">
+                <h3 className="font-display text-sm font-semibold text-[#f5efe4]">
+                  100-Realm Progression Roadmap ({hud.discoveredAreas.length}/100 Discovered)
+                </h3>
+                <div className="flex flex-wrap gap-1">
+                  {REALM_BUCKETS.map((b, idx) => (
+                    <button
+                      key={b.label}
+                      type="button"
+                      onClick={() => setRealmBucketIdx(idx)}
+                      className={`border px-2 py-0.5 text-[10px] font-semibold ${
+                        realmBucketIdx === idx
+                          ? 'border-[#d4a34a] bg-[#d4a34a]/20 text-[#fbbf24]'
+                          : 'border-white/15 text-[#9c9387] hover:text-[#ede7dc]'
+                      }`}
+                    >
+                      {b.label}
+                    </button>
+                  ))}
+                </div>
+              </div>
+              <div className="max-h-60 space-y-1.5 overflow-y-auto pr-1">
+                {roadmapRealms.map((r) => {
                   const isCurrent = !isPreGame && hud.areaId === r.id;
                   const isDiscovered = hud.discoveredAreas.includes(r.id);
                   return (
                     <div
                       key={r.id}
-                      className={`flex flex-col justify-between gap-1 border p-3 sm:flex-row sm:items-center ${
+                      className={`flex flex-col justify-between gap-1 border p-2.5 sm:flex-row sm:items-center ${
                         isCurrent
                           ? 'border-[#d4a34a] bg-[#1a1424]'
                           : isDiscovered
@@ -269,11 +239,16 @@ export const GameModals: React.FC<GameModalsProps> = ({
                       }`}
                     >
                       <div>
-                        <div className="text-xs font-semibold text-[#fbbf24]">{r.step}</div>
-                        <div className="mt-0.5 text-xs text-[#cfc6b6]">{r.goal}</div>
+                        <div className="text-xs font-semibold text-[#fbbf24]">
+                          {String(r.index).padStart(2, '0')}. {r.name}{' '}
+                          <span className="font-normal text-[#9c9387]">
+                            ({r.tier} · Lv {r.recommendedLevel})
+                          </span>
+                        </div>
+                        <div className="mt-0.5 text-[11px] text-[#cfc6b6]">{r.loreText}</div>
                       </div>
                       <span className="shrink-0 text-[11px] font-medium text-[#d4a34a]">
-                        {isCurrent ? 'Current Realm' : isDiscovered ? 'Discovered' : 'Locked'}
+                        {isCurrent ? 'Current' : isDiscovered ? 'Discovered' : 'Locked'}
                       </span>
                     </div>
                   );
@@ -1109,7 +1084,7 @@ export const GameModals: React.FC<GameModalsProps> = ({
                   </div>
                   {hud.collectedWeaponIds.length === 0 ? (
                     <p className="text-xs text-[#a89f92]">
-                      Open Relic Chests across any of the 10 realms to drop random Rare, Epic, Mythic & Divya weapons! Collect them in 3D to equip and fight onward.
+                      Open Relic Chests across any of the 100 realms to drop random Rare, Epic, Mythic & Divya weapons! Collect them in 3D to equip and fight onward.
                     </p>
                   ) : (
                     <div className="grid gap-2.5 sm:grid-cols-2">
@@ -1412,73 +1387,107 @@ export const GameModals: React.FC<GameModalsProps> = ({
               </div>
             )}
 
-            {invTab === 'quests' && (
-              <div className="space-y-6">
-                <div className="space-y-3">
-                  {hud.allQuests.map((q) => (
-                    <div
-                      key={q.id}
-                      className={`border p-4 ${
-                        q.completed
-                          ? 'border-emerald-500/40 bg-emerald-950/20'
-                          : 'border-white/10 bg-[#14111b]'
-                      }`}
-                    >
-                      <div className="flex items-center justify-between">
-                        <h4 className="font-display text-base font-semibold text-[#f5efe4]">
-                          {q.title}
-                        </h4>
-                        <span className="text-xs font-medium text-[#d4a34a]">
-                          {q.completed ? 'Completed' : `+${q.xpReward} XP`}
-                        </span>
-                      </div>
-                      <p className="mt-1 text-xs text-[#a89f92]">{q.description}</p>
-                      <div className="mt-3 space-y-1">
-                        {q.objectives.map((o) => (
-                          <div
-                            key={o.id}
-                            className={`text-xs ${
-                              o.completed ? 'text-emerald-400 line-through' : 'text-[#ddd5c8]'
-                            }`}
-                          >
-                            {o.completed ? '✓' : '○'} {o.label}
-                          </div>
-                        ))}
-                      </div>
-                    </div>
-                  ))}
-                </div>
-
-                <div>
-                  <h3 className="mb-2 font-display text-sm font-semibold text-[#d4a34a]">
-                    Realm Fast Travel
-                  </h3>
-                  <div className="flex flex-wrap gap-2">
-                    {(Object.keys(AREA_LABELS) as AreaId[]).map((aid) => {
-                      const discovered = hud.discoveredAreas.includes(aid);
-                      return (
+            {invTab === 'quests' && (() => {
+              const bucket = REALM_BUCKETS[realmBucketIdx];
+              const visibleRealms = REALMS.filter(
+                (r) => r.index >= bucket.min && r.index <= bucket.max
+              );
+              const visibleQuests = hud.allQuests.filter((q) => {
+                const idx = getRealm(q.areaId).index;
+                return idx >= bucket.min && idx <= bucket.max;
+              });
+              return (
+                <div className="space-y-5">
+                  <div className="flex flex-wrap items-center justify-between gap-2 border border-white/10 bg-[#14111b] p-3">
+                    <span className="text-xs font-semibold text-[#d4a34a]">
+                      100 Realms & Quests · Discovered {hud.discoveredAreas.length}/100
+                    </span>
+                    <div className="flex flex-wrap gap-1">
+                      {REALM_BUCKETS.map((b, idx) => (
                         <button
-                          key={aid}
+                          key={b.label}
                           type="button"
-                          disabled={!discovered || hud.areaId === aid}
-                          onClick={() => engine.travelToDiscoveredArea(aid)}
-                          className={`border px-3 py-2 text-xs font-medium transition-colors ${
-                            hud.areaId === aid
+                          onClick={() => setRealmBucketIdx(idx)}
+                          className={`border px-2 py-0.5 text-[10px] font-semibold ${
+                            realmBucketIdx === idx
                               ? 'border-[#d4a34a] bg-[#d4a34a]/20 text-[#fbbf24]'
-                              : discovered
-                              ? 'border-white/15 bg-[#14111b] text-[#cfc6b6] hover:border-[#d4a34a]/60'
-                              : 'cursor-not-allowed border-white/10 bg-[#0f0c14] text-[#7a7267] opacity-55'
+                              : 'border-white/15 text-[#9c9387] hover:text-[#ede7dc]'
                           }`}
                         >
-                          {AREA_LABELS[aid]}
-                          {!discovered ? ' (Locked)' : ''}
+                          {b.label}
                         </button>
-                      );
-                    })}
+                      ))}
+                    </div>
+                  </div>
+
+                  <div className="space-y-2.5">
+                    {visibleQuests.map((q) => (
+                      <div
+                        key={q.id}
+                        className={`border p-3.5 ${
+                          q.completed
+                            ? 'border-emerald-500/40 bg-emerald-950/20'
+                            : q.areaId === hud.areaId
+                            ? 'border-[#d4a34a]/60 bg-[#1a1424]'
+                            : 'border-white/10 bg-[#14111b]'
+                        }`}
+                      >
+                        <div className="flex items-center justify-between">
+                          <h4 className="font-display text-sm font-semibold text-[#f5efe4]">
+                            {q.title}
+                          </h4>
+                          <span className="text-xs font-medium text-[#d4a34a]">
+                            {q.completed ? 'Completed' : `+${q.xpReward} XP`}
+                          </span>
+                        </div>
+                        <p className="mt-1 text-xs text-[#a89f92]">{q.description}</p>
+                        <div className="mt-2 space-y-1">
+                          {q.objectives.map((o) => (
+                            <div
+                              key={o.id}
+                              className={`text-xs ${
+                                o.completed ? 'text-emerald-400 line-through' : 'text-[#ddd5c8]'
+                              }`}
+                            >
+                              {o.completed ? '✓' : '○'} {o.label}
+                            </div>
+                          ))}
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+
+                  <div>
+                    <h3 className="mb-2 font-display text-sm font-semibold text-[#d4a34a]">
+                      Realm Fast Travel ({bucket.min}–{bucket.max})
+                    </h3>
+                    <div className="grid grid-cols-2 gap-2 sm:grid-cols-3">
+                      {visibleRealms.map((r) => {
+                        const discovered = hud.discoveredAreas.includes(r.id);
+                        return (
+                          <button
+                            key={r.id}
+                            type="button"
+                            disabled={!discovered || hud.areaId === r.id}
+                            onClick={() => engine.travelToDiscoveredArea(r.id)}
+                            className={`truncate border px-3 py-2 text-left text-xs font-medium transition-colors ${
+                              hud.areaId === r.id
+                                ? 'border-[#d4a34a] bg-[#d4a34a]/20 text-[#fbbf24]'
+                                : discovered
+                                ? 'border-white/15 bg-[#14111b] text-[#cfc6b6] hover:border-[#d4a34a]/60'
+                                : 'cursor-not-allowed border-white/10 bg-[#0f0c14] text-[#7a7267] opacity-55'
+                            }`}
+                          >
+                            {r.index}. {r.name}
+                            {!discovered ? ' (Locked)' : ''}
+                          </button>
+                        );
+                      })}
+                    </div>
                   </div>
                 </div>
-              </div>
-            )}
+              );
+            })()}
           </div>
         </div>
       </div>
@@ -1603,7 +1612,7 @@ export const GameModals: React.FC<GameModalsProps> = ({
             Kali Purusha Banished!
           </h2>
           <p className="mt-3 text-sm leading-relaxed text-[#cfc6b6]">
-            Kali Purusha, Sovereign of Kalyug, shatters into golden light. Across all ten sacred
+            Kali Purusha, Sovereign of Kalyug, shatters into golden light. Across all hundred sacred
             realms, Dharma is restored.
           </p>
 

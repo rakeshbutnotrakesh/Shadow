@@ -1,12 +1,13 @@
-import React from 'react';
+import React, { useState } from 'react';
 import { Compass, MapPin, X } from 'lucide-react';
 import { KalyugGameEngine } from '../game/main';
+import { REALMS } from '../game/realms';
 import { AreaId, MapMarker, MapSnapshot } from '../game/types';
-
-import { AREA_NAMES } from '../game/weapons';
 
 interface MinimapProps {
   map: MapSnapshot;
+  areaIndex: number;
+  totalAreas: number;
   areaName: string;
   onExpand: () => void;
 }
@@ -14,13 +15,21 @@ interface MinimapProps {
 interface FullMapModalProps {
   map: MapSnapshot;
   areaId: AreaId;
+  areaIndex: number;
+  totalAreas: number;
   areaName: string;
   discoveredAreas: AreaId[];
   engine: KalyugGameEngine;
   onClose: () => void;
 }
 
-const AREA_LABELS: Record<AreaId, string> = AREA_NAMES;
+const REALM_BUCKETS = [
+  { label: '1–20', min: 1, max: 20 },
+  { label: '21–40', min: 21, max: 40 },
+  { label: '41–60', min: 41, max: 60 },
+  { label: '61–80', min: 61, max: 80 },
+  { label: '81–100', min: 81, max: 100 },
+];
 
 function getMarkerColor(m: MapMarker): string {
   if (m.kind === 'portal') return m.locked ? '#7a7267' : '#fbbf24';
@@ -42,7 +51,13 @@ function projectPoint(x: number, z: number, boundsRadius: number, size: number) 
   };
 }
 
-export const HudMinimap: React.FC<MinimapProps> = ({ map, areaName, onExpand }) => {
+export const HudMinimap: React.FC<MinimapProps> = ({
+  map,
+  areaIndex,
+  totalAreas,
+  areaName,
+  onExpand,
+}) => {
   const size = 112;
   const half = size / 2;
   const p = projectPoint(map.playerX, map.playerZ, map.boundsRadius, size);
@@ -59,7 +74,7 @@ export const HudMinimap: React.FC<MinimapProps> = ({ map, areaName, onExpand }) 
     <button
       type="button"
       onClick={onExpand}
-      title="Open Realm Map (M)"
+      title={`Open Realm Map (M) · ${areaName}`}
       className="pointer-events-auto group relative flex flex-col items-center border border-[#d4a34a]/45 bg-[#0b090f]/88 p-1.5 transition-colors hover:border-[#fbbf24]"
     >
       <svg
@@ -87,7 +102,6 @@ export const HudMinimap: React.FC<MinimapProps> = ({ map, areaName, onExpand }) 
         <line x1={half} y1={6} x2={half} y2={size - 6} stroke="rgba(255,255,255,0.06)" />
         <line x1={6} y1={half} x2={size - 6} y2={half} stroke="rgba(255,255,255,0.06)" />
 
-        {/* Interactive Markers */}
         {map.markers.map((m) => {
           const pt = projectPoint(m.x, m.z, map.boundsRadius, size);
           const color = getMarkerColor(m);
@@ -103,7 +117,6 @@ export const HudMinimap: React.FC<MinimapProps> = ({ map, areaName, onExpand }) 
           return <circle key={m.id} cx={pt.px} cy={pt.py} r={2.6} fill={color} />;
         })}
 
-        {/* Enemies */}
         {map.enemies.map((e, idx) => {
           const pt = projectPoint(e.x, e.z, map.boundsRadius, size);
           return (
@@ -119,7 +132,6 @@ export const HudMinimap: React.FC<MinimapProps> = ({ map, areaName, onExpand }) 
           );
         })}
 
-        {/* Player Direction Arrow */}
         <polygon
           points={`${tipX},${tipY} ${leftX},${leftY} ${rightX},${rightY}`}
           fill="#f8fafc"
@@ -128,7 +140,9 @@ export const HudMinimap: React.FC<MinimapProps> = ({ map, areaName, onExpand }) 
         />
       </svg>
       <div className="mt-0.5 flex w-full items-center justify-between px-0.5 text-[9px] font-medium text-[#cfc6b6] group-hover:text-[#fbbf24]">
-        <span className="truncate max-w-[54px]">{areaName.split(' ')[0]}</span>
+        <span className="font-mono-num">
+          A{areaIndex}/{totalAreas}
+        </span>
         <span className="font-mono-num text-[#d4a34a]">[M]</span>
       </div>
     </button>
@@ -138,11 +152,21 @@ export const HudMinimap: React.FC<MinimapProps> = ({ map, areaName, onExpand }) 
 export const FullRealmMapModal: React.FC<FullMapModalProps> = ({
   map,
   areaId,
+  areaIndex,
+  totalAreas,
   areaName,
   discoveredAreas,
   engine,
   onClose,
 }) => {
+  const initialBucket = Math.min(
+    REALM_BUCKETS.length - 1,
+    Math.floor(Math.max(0, areaIndex - 1) / 20)
+  );
+  const [bucketIdx, setBucketIdx] = useState(initialBucket);
+  const bucket = REALM_BUCKETS[bucketIdx];
+  const bucketRealms = REALMS.filter((r) => r.index >= bucket.min && r.index <= bucket.max);
+
   const size = 320;
   const half = size / 2;
   const p = projectPoint(map.playerX, map.playerZ, map.boundsRadius, size);
@@ -157,16 +181,16 @@ export const FullRealmMapModal: React.FC<FullMapModalProps> = ({
 
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/82 p-3 sm:p-4">
-      <div className="max-h-[94vh] w-full max-w-3xl overflow-y-auto border border-[#d4a34a]/45 bg-[#0d0b12] p-4 sm:p-6">
+      <div className="max-h-[94vh] w-full max-w-4xl overflow-y-auto border border-[#d4a34a]/45 bg-[#0d0b12] p-4 sm:p-6">
         <div className="flex items-center justify-between border-b border-white/10 pb-3">
           <div className="flex items-center gap-2">
             <Compass className="h-5 w-5 text-[#d4a34a]" />
             <div>
               <h2 className="font-display text-lg font-semibold text-[#f5efe4] sm:text-xl">
-                Realm Map · {areaName}
+                Realm Map · Area {areaIndex}/{totalAreas} · {areaName}
               </h2>
               <p className="text-[11px] text-[#a89f92]">
-                Live radar of portals, relics, shrines & threats
+                Live radar & Fast Travel across {discoveredAreas.length}/100 discovered realms
               </p>
             </div>
           </div>
@@ -256,8 +280,8 @@ export const FullRealmMapModal: React.FC<FullMapModalProps> = ({
             </svg>
           </div>
 
-          {/* Legend, Nearby Landmarks & Fast Travel */}
-          <div className="space-y-4 text-xs">
+          {/* Legend, Landmarks & 100-Area Fast Travel */}
+          <div className="space-y-3 text-xs">
             <div className="border border-white/10 bg-[#14101c] p-3">
               <div className="mb-2 font-semibold text-[#d4a34a]">Map Legend</div>
               <div className="grid grid-cols-2 gap-1.5 text-[#cfc6b6]">
@@ -290,7 +314,7 @@ export const FullRealmMapModal: React.FC<FullMapModalProps> = ({
                 <MapPin className="h-3.5 w-3.5" />
                 Active Landmarks in {areaName}
               </div>
-              <div className="max-h-32 space-y-1 overflow-y-auto pr-1">
+              <div className="max-h-24 space-y-1 overflow-y-auto pr-1">
                 {map.markers.length === 0 ? (
                   <p className="text-[#9c9387]">All landmarks cleared in this realm.</p>
                 ) : (
@@ -313,21 +337,41 @@ export const FullRealmMapModal: React.FC<FullMapModalProps> = ({
             </div>
 
             <div className="border border-white/10 bg-[#14101c] p-3">
-              <div className="mb-2 font-semibold text-[#d4a34a]">Realm Fast Travel</div>
-              <div className="flex flex-wrap gap-1.5">
-                {(Object.keys(AREA_LABELS) as AreaId[]).map((aid) => {
-                  const discovered = discoveredAreas.includes(aid);
-                  const current = aid === areaId;
+              <div className="mb-2 flex flex-wrap items-center justify-between gap-2">
+                <span className="font-semibold text-[#d4a34a]">
+                  100-Realm Fast Travel ({discoveredAreas.length}/100)
+                </span>
+                <div className="flex flex-wrap gap-1">
+                  {REALM_BUCKETS.map((b, i) => (
+                    <button
+                      key={b.label}
+                      type="button"
+                      onClick={() => setBucketIdx(i)}
+                      className={`border px-2 py-0.5 text-[10px] font-semibold ${
+                        bucketIdx === i
+                          ? 'border-[#d4a34a] bg-[#d4a34a]/20 text-[#fbbf24]'
+                          : 'border-white/15 text-[#9c9387] hover:text-[#ede7dc]'
+                      }`}
+                    >
+                      {b.label}
+                    </button>
+                  ))}
+                </div>
+              </div>
+              <div className="grid max-h-36 grid-cols-2 gap-1.5 overflow-y-auto pr-1 sm:grid-cols-3">
+                {bucketRealms.map((r) => {
+                  const discovered = discoveredAreas.includes(r.id);
+                  const current = r.id === areaId;
                   return (
                     <button
-                      key={aid}
+                      key={r.id}
                       type="button"
                       disabled={!discovered || current}
                       onClick={() => {
-                        engine.travelToDiscoveredArea(aid);
+                        engine.travelToDiscoveredArea(r.id);
                         onClose();
                       }}
-                      className={`border px-2.5 py-1.5 text-[11px] font-medium ${
+                      className={`truncate border px-2 py-1.5 text-left text-[11px] font-medium ${
                         current
                           ? 'border-[#d4a34a] bg-[#d4a34a]/20 text-[#fbbf24]'
                           : discovered
@@ -335,7 +379,7 @@ export const FullRealmMapModal: React.FC<FullMapModalProps> = ({
                           : 'border-white/10 bg-[#0f0c14] text-[#7a7267] opacity-55'
                       }`}
                     >
-                      {AREA_LABELS[aid]}
+                      <span className="font-mono-num text-[#d4a34a]">{r.index}.</span> {r.name}
                     </button>
                   );
                 })}

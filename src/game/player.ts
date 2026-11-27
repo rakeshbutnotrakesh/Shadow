@@ -79,6 +79,7 @@ export class PlayerController {
 
   private walkPhase = 0;
   private stepAccumulator = 0;
+  private sprintExhausted = false;
 
   constructor(scene: THREE.Scene) {
     this.group.add(this.bodyPivot);
@@ -512,7 +513,12 @@ export class PlayerController {
       _moveDir.normalize();
     }
 
-    const canSprint = input.sprint && isMoving && this.energy > 4;
+    if (this.energy <= 1) {
+      this.sprintExhausted = true;
+    } else if (this.energy >= 12) {
+      this.sprintExhausted = false;
+    }
+    const canSprint = input.sprint && isMoving && !this.sprintExhausted && this.energy > 1;
     if (canSprint) {
       this.energy = Math.max(0, this.energy - stats.sprintCostPerSec * dt);
     } else {
@@ -542,13 +548,24 @@ export class PlayerController {
     this.position.x = resolved.x;
     this.position.z = resolved.z;
 
-    // Integrate Y against ground height
+    // Integrate Y against ground height with smooth step-up on stairs/slopes
+    const wasGrounded = this.grounded;
+    const fallSpeed = -this.velocity.y;
+    const prevY = this.position.y;
     this.position.y += this.velocity.y * dt;
     const groundY = groundHeightAt(this.position.x, this.position.z);
-    if (this.position.y <= groundY) {
+
+    if (wasGrounded && this.velocity.y <= 0.1 && groundY >= prevY - 0.18 && groundY <= prevY + 0.72) {
+      this.position.y = THREE.MathUtils.damp(prevY, groundY, 24, dt);
+      this.velocity.y = 0;
+      this.grounded = true;
+    } else if (this.position.y <= groundY) {
       this.position.y = groundY;
       this.velocity.y = 0;
       this.grounded = true;
+      if (!wasGrounded && fallSpeed > 5.5) {
+        audio.playFootstep(isStoneGround, true);
+      }
     } else {
       this.grounded = false;
     }

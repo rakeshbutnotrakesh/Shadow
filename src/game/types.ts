@@ -12,7 +12,8 @@ export type AreaId =
   | 'astral_observatory'
   | 'serpent_caverns'
   | 'sanctum'
-  | 'final_chamber';
+  | 'final_chamber'
+  | `realm_${number}`;
 
 export type GameScreen =
   | 'class_select'
@@ -223,6 +224,8 @@ export interface MapSnapshot {
 export interface HudSnapshot {
   screen: GameScreen;
   areaId: AreaId;
+  areaIndex: number;
+  totalAreas: number;
   areaName: string;
   areaSubtitle: string;
   playerClass: ClassId;

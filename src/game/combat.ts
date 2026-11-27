@@ -1,6 +1,7 @@
 import * as THREE from 'three';
 import { AudioEngine } from './audio';
 import { EnemyEntity } from './enemy';
+import { ColliderBox } from './types';
 
 interface Projectile {
   mesh: THREE.Object3D;
@@ -10,6 +11,7 @@ interface Projectile {
   fromPlayer: boolean;
   isArrow?: boolean;
   pierce?: boolean;
+  gravity?: number;
   hitIds: Set<string>;
 }
 
@@ -332,13 +334,16 @@ export class CombatSystem {
     arrowGroup.rotation.y = Math.atan2(flatDir.x, flatDir.z);
     this.scene.add(arrowGroup);
 
+    const vel = flatDir.multiplyScalar(30);
+    vel.y = 1.05; // Subtle upward launch so arrow arcs realistically across distance
     this.projectiles.push({
       mesh: arrowGroup,
-      vel: flatDir.multiplyScalar(30),
+      vel,
       damage,
-      life: 1.4,
+      life: 1.5,
       fromPlayer: true,
       isArrow: true,
+      gravity: 3.2,
       hitIds: new Set(),
     });
   }
@@ -363,14 +368,17 @@ export class CombatSystem {
     arrowGroup.rotation.y = Math.atan2(flatDir.x, flatDir.z);
     this.scene.add(arrowGroup);
 
+    const vel = flatDir.multiplyScalar(38);
+    vel.y = 0.45;
     this.projectiles.push({
       mesh: arrowGroup,
-      vel: flatDir.multiplyScalar(38),
+      vel,
       damage,
-      life: 1.3,
+      life: 1.35,
       fromPlayer: true,
       isArrow: true,
       pierce: true,
+      gravity: 1.4,
       hitIds: new Set(),
     });
   }
@@ -618,12 +626,33 @@ export class CombatSystem {
     slot.points.visible = true;
   }
 
+  private projectileHitsWall(pos: THREE.Vector3, colliders: ColliderBox[]): boolean {
+    for (let i = 0; i < colliders.length; i++) {
+      const c = colliders[i];
+      if (c.blocksCamera === false) continue;
+      if (pos.y < c.y || pos.y > c.y + c.height) continue;
+      if (c.type === 'cylinder') {
+        const r = (c.radius ?? 0.6) + 0.16;
+        const dx = pos.x - c.x;
+        const dz = pos.z - c.z;
+        if (dx * dx + dz * dz < r * r) return true;
+      } else {
+        const hw = (c.halfW ?? 1) + 0.16;
+        const hd = (c.halfD ?? 1) + 0.16;
+        if (Math.abs(pos.x - c.x) < hw && Math.abs(pos.z - c.z) < hd) return true;
+      }
+    }
+    return false;
+  }
+
   public update(
     dt: number,
     playerPos: THREE.Vector3,
     playerRadius: number,
     playerGrounded: boolean,
     enemies: EnemyEntity[],
+    colliders: ColliderBox[],
+    groundHeightAt: (x: number, z: number) => number,
     audio: AudioEngine,
     onPlayerDamaged: (rawDamage: number) => void,
     onEnemyKilled: (enemy: EnemyEntity) => void
@@ -632,13 +661,29 @@ export class CombatSystem {
     for (let i = this.projectiles.length - 1; i >= 0; i--) {
       const p = this.projectiles[i];
       p.life -= dt;
+      if (p.gravity) {
+        p.vel.y -= p.gravity * dt;
+      }
       p.mesh.position.addScaledVector(p.vel, dt);
-      if (!p.isArrow) {
+      if (p.isArrow) {
+        const horiz = Math.hypot(p.vel.x, p.vel.z);
+        if (horiz > 0.1) {
+          p.mesh.rotation.x = -Math.atan2(p.vel.y, horiz);
+        }
+      } else {
         p.mesh.rotation.z += dt * 8;
         p.mesh.rotation.y += dt * 6;
       }
 
       let remove = p.life <= 0;
+      if (!remove && p.mesh.position.y <= groundHeightAt(p.mesh.position.x, p.mesh.position.z) + 0.05) {
+        this.spawnBurst(p.mesh.position, p.isArrow ? 0xd97706 : 0x38bdf8, 6);
+        remove = true;
+      }
+      if (!remove && this.projectileHitsWall(p.mesh.position, colliders)) {
+        this.spawnBurst(p.mesh.position, p.fromPlayer ? 0xfbbf24 : 0xef4444, 7);
+        remove = true;
+      }
 
       if (!remove && p.fromPlayer) {
         for (const enemy of enemies) {
@@ -648,7 +693,7 @@ export class CombatSystem {
           const hitR = enemy.radius + (p.isArrow ? 0.55 : 0.85);
           if (dx * dx + dz * dz <= hitR * hitR) {
             p.hitIds.add(enemy.id);
-            const dir = p.vel.clone().normalize();
+            const dir = p.vel.clone().setY(0).normalize();
             const killed = enemy.takeDamage(p.damage, dir, p.isArrow ? 4.5 : 7.5);
             audio.playHit(true);
             this.spawnBurst(p.mesh.position, p.isArrow ? 0x22c55e : 0xfbbf24, 12);

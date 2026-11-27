@@ -23,6 +23,7 @@ import {
   MAX_LEVEL,
 } from './progression';
 import { buildAreaQuests } from './quests';
+import { getRealm, TOTAL_AREAS } from './realms';
 import {
   createNewSaveData,
   hasSavedGame,
@@ -120,18 +121,9 @@ export class KalyugGameEngine {
   private flags: WorldFlags = createNewSaveData().flags;
   private completedQuestIds: string[] = [];
   private enemiesDefeated = 0;
-  private enemiesDefeatedInArea: Record<AreaId, number> = {
-    forest: 0,
-    temple: 0,
-    catacombs: 0,
-    sunken_stepwell: 0,
-    ashram_ruins: 0,
-    asura_fortress: 0,
-    astral_observatory: 0,
-    serpent_caverns: 0,
-    sanctum: 0,
-    final_chamber: 0,
-  };
+  private enemiesDefeatedInArea: Partial<Record<AreaId, number>> = {};
+  private cachedQuests: QuestState[] = [];
+  private questsDirty = true;
 
   private stats: ComputedPlayerStats;
   private blessingChoices: GodBlessing[] = [];
@@ -158,7 +150,7 @@ export class KalyugGameEngine {
   private activeVedaMantra: VedaMantra | null = null;
   private vedaMantraTimer = 0;
 
-  private clock = new THREE.Clock();
+  private timer = new THREE.Timer();
   private elapsedTime = 0;
   private hudEmitAccum = 0;
   private frameId = 0;
@@ -169,6 +161,7 @@ export class KalyugGameEngine {
   private saveQueued = false;
   private saveFlushTimer = 0;
   private needsStaticRender = true;
+  private lastEmittedScreen: GameScreen = 'class_select';
 
   constructor(
     container: HTMLElement,
@@ -259,6 +252,7 @@ export class KalyugGameEngine {
     window.addEventListener('orientationchange', this.handleResize);
     this.renderer.domElement.addEventListener('webglcontextlost', this.handleContextLost);
 
+    this.timer.connect(document);
     this.emitHud();
     this.startLoop();
   }
@@ -625,18 +619,8 @@ export class KalyugGameEngine {
     };
     this.completedQuestIds = [...data.completedQuestIds];
     this.enemiesDefeated = data.enemiesDefeated ?? 0;
-    this.enemiesDefeatedInArea = {
-      forest: data.enemiesDefeatedInArea?.forest ?? 0,
-      temple: data.enemiesDefeatedInArea?.temple ?? 0,
-      catacombs: data.enemiesDefeatedInArea?.catacombs ?? 0,
-      sunken_stepwell: data.enemiesDefeatedInArea?.sunken_stepwell ?? 0,
-      ashram_ruins: data.enemiesDefeatedInArea?.ashram_ruins ?? 0,
-      asura_fortress: data.enemiesDefeatedInArea?.asura_fortress ?? 0,
-      astral_observatory: data.enemiesDefeatedInArea?.astral_observatory ?? 0,
-      serpent_caverns: data.enemiesDefeatedInArea?.serpent_caverns ?? 0,
-      sanctum: data.enemiesDefeatedInArea?.sanctum ?? 0,
-      final_chamber: data.enemiesDefeatedInArea?.final_chamber ?? 0,
-    };
+    this.enemiesDefeatedInArea = { ...(data.enemiesDefeatedInArea ?? {}) };
+    this.questsDirty = true;
     this.forgeShards = data.forgeShards ?? 2;
     this.forgedWeaponBonus = data.forgedWeaponBonus ?? 0;
     this.forgedWeaponsCount = data.forgedWeaponsCount ?? 0;
@@ -771,7 +755,7 @@ export class KalyugGameEngine {
       this.blessings.push(blessingId);
     }
     const def = BLESSINGS_BY_ID[blessingId];
-    if (def) {
+    if (def && !this.equippedChestWeaponId && this.forgedWeaponsCount === 0) {
       this.activeWeaponName = def.weaponName;
     }
     this.recomputeStats();
@@ -1025,7 +1009,9 @@ export class KalyugGameEngine {
       this.flags.discoveredAreas.push(areaId);
       this.grantXp(75);
     }
+    this.questsDirty = true;
 
+    const realmDef = getRealm(areaId);
     const built = this.worldBuilder.buildArea(
       areaId,
       this.flags,
@@ -1034,8 +1020,12 @@ export class KalyugGameEngine {
     );
     this.currentArea = built;
 
+    const spawnLevel = Math.max(
+      this.level,
+      Math.min(this.level + 8, realmDef.recommendedLevel)
+    );
     for (const spawn of built.enemySpawns) {
-      this.enemies.push(new EnemyEntity({ ...spawn, level: this.level }, this.scene));
+      this.enemies.push(new EnemyEntity({ ...spawn, level: spawnLevel }, this.scene));
     }
 
     const pos = customPos ?? built.defaultSpawn;
@@ -1100,16 +1090,26 @@ export class KalyugGameEngine {
       this.screen = 'levelup';
       this.needsStaticRender = true;
       this.queueSave();
+      this.emitHud();
     }
   }
 
+  private getQuests(): QuestState[] {
+    if (this.questsDirty || this.cachedQuests.length === 0) {
+      this.cachedQuests = buildAreaQuests(
+        this.flags,
+        this.artifacts,
+        this.enemiesDefeatedInArea,
+        this.completedQuestIds
+      );
+      this.questsDirty = false;
+    }
+    return this.cachedQuests;
+  }
+
   private checkQuestCompletions(): void {
-    const quests = buildAreaQuests(
-      this.flags,
-      this.artifacts,
-      this.enemiesDefeatedInArea,
-      this.completedQuestIds
-    );
+    this.questsDirty = true;
+    const quests = this.getQuests();
     let anyCompleted = false;
     for (const q of quests) {
       if (q.completed && !this.completedQuestIds.includes(q.id)) {
@@ -1120,6 +1120,7 @@ export class KalyugGameEngine {
       }
     }
     if (anyCompleted) {
+      this.questsDirty = true;
       this.queueSave();
     }
   }
@@ -1128,31 +1129,50 @@ export class KalyugGameEngine {
     this.enemiesDefeated += 1;
     const areaKills = (this.enemiesDefeatedInArea[this.areaId] ?? 0) + 1;
     this.enemiesDefeatedInArea[this.areaId] = areaKills;
+    this.questsDirty = true;
     this.grantXp(enemy.xpReward);
 
-    // Unseal kill-gated portals in Realms 4..8 once 3 foes are cleared
-    const killGatedAreas: AreaId[] = [
-      'sunken_stepwell',
-      'ashram_ruins',
-      'asura_fortress',
-      'astral_observatory',
-      'serpent_caverns',
-    ];
-    if (killGatedAreas.includes(this.areaId) && this.currentArea) {
+    if (enemy.isWarden && !this.flags.defeatedBosses.includes(enemy.id)) {
+      this.flags.defeatedBosses.push(enemy.id);
+      this.forgeShards += 2;
+    }
+
+    // Unseal kill-gated (and milestone Warden-gated) portals across Realms 4..98
+    const realmDef = getRealm(this.areaId);
+    const wardenKey = `warden_${this.areaId}`;
+    const isWardenArea = realmDef.index > 0 && realmDef.index % 10 === 0 && realmDef.index < 99;
+    const wardenCleared = !isWardenArea || this.flags.defeatedBosses.includes(wardenKey);
+    let unsealedPortalLabel = '';
+
+    if (realmDef.requiredKills > 0 && this.currentArea) {
       for (const it of this.currentArea.interactives) {
         if (it.kind === 'portal' && it.locked) {
-          if (areaKills >= 3) {
+          if (areaKills >= realmDef.requiredKills && wardenCleared) {
             it.locked = false;
             it.lockReason = '';
             const mat = (it.mesh as THREE.Mesh).material as THREE.MeshBasicMaterial;
             mat.color.setHex(0xd4a34a);
             mat.opacity = 0.75;
-            this.showToast('Portal Unsealed!', `Proceed to ${it.label} [E]`, 'gold');
+            unsealedPortalLabel = it.label;
+          } else if (isWardenArea && !wardenCleared) {
+            it.lockReason = `Vanquish the Realm Warden & ${realmDef.requiredKills} Shadows (${Math.min(realmDef.requiredKills, areaKills)}/${realmDef.requiredKills})`;
           } else {
-            it.lockReason = `Defeat 3 Shadows in this realm (${areaKills}/3)`;
+            it.lockReason = `Banish ${realmDef.requiredKills} Shadows in this realm (${areaKills}/${realmDef.requiredKills})`;
           }
         }
       }
+    }
+
+    if (enemy.isWarden) {
+      this.showToast(
+        `${enemy.wardenTitle ?? 'Realm Warden'} Vanquished!`,
+        unsealedPortalLabel
+          ? `+2 Forge Shards · ${unsealedPortalLabel} Unsealed!`
+          : '+2 Bonus Forge Shards · Milestone Trophy Claimed',
+        'gold'
+      );
+    } else if (unsealedPortalLabel) {
+      this.showToast('Portal Unsealed!', `Proceed to ${unsealedPortalLabel} [E]`, 'gold');
     }
 
     if (this.playerClass === 'blacksmith' || Math.random() < 0.45) {
@@ -1371,8 +1391,17 @@ export class KalyugGameEngine {
       }
       this.input.releasePointerLock();
     } else if (obj.kind === 'portal' && obj.targetArea) {
+      const currentIdx = getRealm(this.areaId).index;
+      const targetIdx = getRealm(obj.targetArea).index;
       this.audio.playPortal();
       this.loadArea(obj.targetArea, true);
+      if (targetIdx < currentIdx && this.currentArea) {
+        const returnZ = obj.targetArea === 'forest' || obj.targetArea === 'sanctum' ? -20 : -18.5;
+        const returnPos = new THREE.Vector3(0, this.currentArea.groundHeightAt(0, returnZ), returnZ);
+        this.player.resetForArea(returnPos, 0);
+        this.camCtrl.snapToPlayer(returnPos, 0);
+        this.pet.setPet(this.petId, returnPos);
+      }
       this.showToast(
         `Entered ${this.currentArea?.name ?? ''}`,
         this.currentArea?.subtitle ?? '',
@@ -1389,22 +1418,47 @@ export class KalyugGameEngine {
     if (!weapon || obj.consumed) return;
     obj.consumed = true;
     obj.mesh.visible = false;
-    if (!this.collectedWeaponIds.includes(weapon.id)) {
+
+    const alreadyOwned = this.collectedWeaponIds.includes(weapon.id);
+    if (!alreadyOwned) {
       this.collectedWeaponIds.push(weapon.id);
     }
-    this.equippedChestWeaponId = weapon.id;
-    this.chestWeaponBonus = weapon.powerBonus;
-    this.activeWeaponName = `${weapon.name} (+${weapon.powerBonus})`;
-    this.player.setWeaponAccent(weapon.accentHex);
-    this.recomputeStats();
-    this.audio.playAnvilForge();
-    this.combat.spawnBurst(obj.position.clone(), weapon.accentHex, 26);
-    this.showToast(
-      `Collected & Equipped: ${weapon.name}`,
-      `${weapon.rarity} Weapon (+${weapon.powerBonus} ATK) — Ready for battle!`,
-      'gold'
-    );
-    this.grantXp(50);
+
+    if (alreadyOwned) {
+      this.forgeShards += 2;
+      this.audio.playAnvilForge();
+      this.combat.spawnBurst(obj.position.clone(), weapon.accentHex, 20);
+      this.showToast(
+        `Duplicate Relic Salvaged: ${weapon.name}`,
+        '+2 Forge Shards & +35 XP added to Satchel',
+        'spirit'
+      );
+      this.grantXp(35);
+    } else if (!this.equippedChestWeaponId || weapon.powerBonus >= this.chestWeaponBonus) {
+      this.equippedChestWeaponId = weapon.id;
+      this.chestWeaponBonus = weapon.powerBonus;
+      this.activeWeaponName = `${weapon.name} (+${weapon.powerBonus})`;
+      this.player.setWeaponAccent(weapon.accentHex);
+      this.recomputeStats();
+      this.audio.playAnvilForge();
+      this.combat.spawnBurst(obj.position.clone(), weapon.accentHex, 26);
+      this.showToast(
+        `Collected & Equipped: ${weapon.name}`,
+        `${weapon.rarity} Weapon (+${weapon.powerBonus} ATK) — Ready for battle!`,
+        'gold'
+      );
+      this.grantXp(50);
+    } else {
+      this.audio.playArtifactPickup();
+      this.combat.spawnBurst(obj.position.clone(), weapon.accentHex, 18);
+      this.showToast(
+        `Stored in Satchel: ${weapon.name}`,
+        `${weapon.rarity} (+${weapon.powerBonus} ATK) · Kept stronger weapon (+${this.chestWeaponBonus} ATK)`,
+        'spirit'
+      );
+      this.grantXp(50);
+    }
+
     this.saveProgress();
     this.emitHud();
   }
@@ -1420,10 +1474,11 @@ export class KalyugGameEngine {
   // =========================================================================
 
   private startLoop(): void {
-    const tick = () => {
+    const tick = (timestamp?: number) => {
       if (this.disposed) return;
 
-      const dt = Math.min(0.05, this.clock.getDelta());
+      this.timer.update(timestamp);
+      const dt = Math.min(0.05, this.timer.getDelta());
       this.elapsedTime += dt;
 
       this.step(dt);
@@ -1554,6 +1609,9 @@ export class KalyugGameEngine {
     }
 
     if (this.screen !== 'playing' || !this.currentArea) {
+      if (this.screen !== this.lastEmittedScreen) {
+        this.emitHud();
+      }
       return;
     }
 
@@ -1726,6 +1784,30 @@ export class KalyugGameEngine {
       isSprinting
     );
 
+    // Soft enemy-to-enemy separation so packs fan out naturally instead of overlapping identically
+    for (let i = 0; i < this.enemies.length; i++) {
+      const a = this.enemies[i];
+      if (!a.alive || a.dying) continue;
+      for (let j = i + 1; j < this.enemies.length; j++) {
+        const b = this.enemies[j];
+        if (!b.alive || b.dying) continue;
+        const dx = b.position.x - a.position.x;
+        const dz = b.position.z - a.position.z;
+        const minSep = a.radius + b.radius + 0.35;
+        const distSq = dx * dx + dz * dz;
+        if (distSq < minSep * minSep) {
+          const dist = Math.sqrt(distSq);
+          const nx = dist > 0.001 ? dx / dist : 1;
+          const nz = dist > 0.001 ? dz / dist : 0;
+          const push = (minSep - dist) * 0.42;
+          a.position.x -= nx * push;
+          a.position.z -= nz * push;
+          b.position.x += nx * push;
+          b.position.z += nz * push;
+        }
+      }
+    }
+
     let detectedCount = 0;
     const newlySummoned: EnemyEntity[] = [];
 
@@ -1791,6 +1873,8 @@ export class KalyugGameEngine {
       this.player.radius,
       this.player.grounded,
       this.enemies,
+      this.currentArea.colliders,
+      this.currentArea.groundHeightAt,
       this.audio,
       this.handlePlayerDamaged,
       this.handleEnemyKilled
@@ -1824,24 +1908,23 @@ export class KalyugGameEngine {
   }
 
   private emitHud(): void {
-    const allQuests: QuestState[] = buildAreaQuests(
-      this.flags,
-      this.artifacts,
-      this.enemiesDefeatedInArea,
-      this.completedQuestIds
-    );
+    this.lastEmittedScreen = this.screen;
+    const allQuests = this.getQuests();
     const activeQuest =
       allQuests.find((q) => q.areaId === this.areaId) ??
       allQuests.find((q) => !q.completed) ??
       null;
 
-    const bossEntity = this.enemies.find((e) => e.type === 'boss_kali' && e.alive);
+    const realmDef = getRealm(this.areaId);
+    const bossEntity = this.enemies.find((e) => (e.type === 'boss_kali' || e.isWarden) && e.alive);
 
     this.onHudUpdate({
       screen: this.screen,
       areaId: this.areaId,
-      areaName: this.currentArea?.name ?? 'Forgotten Forest',
-      areaSubtitle: this.currentArea?.subtitle ?? '',
+      areaIndex: realmDef.index,
+      totalAreas: TOTAL_AREAS,
+      areaName: this.currentArea?.name ?? realmDef.name,
+      areaSubtitle: this.currentArea?.subtitle ?? realmDef.subtitle,
       playerClass: this.playerClass,
       activeWeaponName: this.activeWeaponName,
       health: Math.ceil(this.player.health),
@@ -1890,11 +1973,11 @@ export class KalyugGameEngine {
       boss: bossEntity
         ? {
             active: true,
-            name: 'Kali Purusha',
-            title: 'Sovereign of Kalyug',
+            name: bossEntity.isWarden ? (bossEntity.wardenTitle ?? 'Realm Warden') : 'Kali Purusha',
+            title: bossEntity.isWarden ? 'Milestone Guardian' : 'Sovereign of Kalyug',
             health: Math.ceil(bossEntity.health),
             maxHealth: bossEntity.maxHealth,
-            phase: bossEntity.bossPhase,
+            phase: bossEntity.isWarden ? 1 : bossEntity.bossPhase,
           }
         : null,
       toast: this.toast,
@@ -1924,7 +2007,7 @@ export class KalyugGameEngine {
           .map((e) => ({
             x: e.position.x,
             z: e.position.z,
-            isBoss: e.type === 'boss_kali',
+            isBoss: e.type === 'boss_kali' || e.isWarden,
           })),
         markers: (this.currentArea?.interactives ?? [])
           .filter((it) => !it.consumed || it.kind === 'portal' || it.kind === 'bell' || it.kind === 'trial_shrine')
@@ -1948,6 +2031,7 @@ export class KalyugGameEngine {
     window.removeEventListener('orientationchange', this.handleResize);
     this.renderer.domElement.removeEventListener('webglcontextlost', this.handleContextLost);
     this.detachInputs?.();
+    this.timer.dispose();
 
     this.combat.dispose();
     for (const e of this.enemies) e.dispose(this.scene);

@@ -23,8 +23,10 @@ import { GameSettings, HudSnapshot } from './game/types';
 const INITIAL_HUD: HudSnapshot = {
   screen: 'class_select',
   areaId: 'forest',
+  areaIndex: 1,
+  totalAreas: 100,
   areaName: 'Forgotten Forest',
-  areaSubtitle: 'Chapter I · Grove of Whispering Banyans',
+  areaSubtitle: 'Area 1 · Grove of Whispering Banyans',
   playerClass: 'warrior',
   activeWeaponName: 'Khanda Astra Sword',
   health: 100,
@@ -598,6 +600,8 @@ export default function App() {
               <div className="flex items-start gap-1.5 sm:gap-2">
                 <HudMinimap
                   map={hud.map}
+                  areaIndex={hud.areaIndex}
+                  totalAreas={hud.totalAreas}
                   areaName={hud.areaName}
                   onExpand={openMap}
                 />
@@ -605,7 +609,9 @@ export default function App() {
                 <div className="w-36 border border-[#d4a34a]/25 bg-[#0b090f]/85 p-2 text-right sm:w-52 sm:p-2.5 [@media(max-height:500px)]:w-44 [@media(max-height:500px)]:p-2">
                   <div className="flex items-center justify-end gap-1 text-[10px] font-semibold text-[#d4a34a] sm:text-xs">
                     <Compass className="h-3 w-3 shrink-0" />
-                    <span className="truncate">{hud.areaName}</span>
+                    <span className="truncate">
+                      {hud.areaIndex}/{hud.totalAreas} · {hud.areaName}
+                    </span>
                   </div>
                   {hud.activeQuest && (
                     <div className="mt-1.5 border-t border-white/10 pt-1.5 text-left">
@@ -737,6 +743,8 @@ export default function App() {
         <FullRealmMapModal
           map={hud.map}
           areaId={hud.areaId}
+          areaIndex={hud.areaIndex}
+          totalAreas={hud.totalAreas}
           areaName={hud.areaName}
           discoveredAreas={hud.discoveredAreas}
           engine={engineRef.current}
